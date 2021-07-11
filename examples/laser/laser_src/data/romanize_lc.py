@@ -14,10 +14,9 @@
 #
 # Romanize and lower case text
 
-import os
 import sys
 import argparse
-from transliterate import translit, get_available_language_codes
+from transliterate import translit
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.RawDescriptionHelpFormatter,
