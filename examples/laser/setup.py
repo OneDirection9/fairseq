@@ -9,7 +9,10 @@ def get_readme():
     return content
 
 
-install_requires = []
+install_requires = [
+    "transliterate",
+    "jieba",
+]
 
 extras_require = {
     "dev": [
