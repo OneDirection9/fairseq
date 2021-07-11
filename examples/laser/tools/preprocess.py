@@ -95,7 +95,7 @@ LANG_MAP = {
 def main():
     args = parse_args()
 
-    data_root = osp.join(LASER, "laser_src/data")
+    data_root = osp.join(LASER, "data")
     bpe_codes = get_bpe_codes(args.alias)
 
     def _get_inp_dir(_folder):
