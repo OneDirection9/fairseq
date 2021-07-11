@@ -5,8 +5,8 @@ import os
 import os.path as osp
 import tempfile
 
-from laser.data.text_processing import LASER, BPEfastApply, Token
-from laser.data.utils import get_bpe_codes
+from laser_src.data.text_processing import LASER, BPEfastApply, Token
+from laser_src.data.utils import get_bpe_codes
 
 
 def parse_args():
