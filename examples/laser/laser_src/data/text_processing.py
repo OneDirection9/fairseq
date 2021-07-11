@@ -16,14 +16,11 @@
 
 import os
 import sys
-import tempfile
 import fastBPE
 import numpy as np
 from subprocess import run, check_output, DEVNULL
 
-# get environment
-assert os.environ.get('LASER'), 'Please set the enviornment variable LASER'
-LASER = os.environ['LASER']
+from .utils import LASER
 
 FASTBPE = LASER + '/tools-external/fastBPE/fast'
 MOSES_BDIR = LASER + '/tools-external/moses-tokenizer/tokenizer/'
@@ -34,7 +31,7 @@ DESCAPE = MOSES_BDIR + 'deescape-special-chars.perl'
 REM_NON_PRINT_CHAR = MOSES_BDIR + 'remove-non-printing-char.perl'
 
 # Romanization (Greek only)
-ROMAN_LC = 'python3 ' + LASER + '/source/lib/romanize_lc.py -l '
+ROMAN_LC = 'python3 ' + LASER + '/laser_src/data/romanize_lc.py -l '
 
 # Mecab tokenizer for Japanese
 MECAB = LASER + '/tools-external/mecab'
@@ -50,16 +47,16 @@ def TokenLine(line, lang='en', lower_case=True, romanize=False):
     assert lower_case, 'lower case is needed by all the models'
     roman = lang if romanize else 'none'
     tok = check_output(
-            REM_NON_PRINT_CHAR
-            + '|' + NORM_PUNC + lang
-            + '|' + DESCAPE
-            + '|' + MOSES_TOKENIZER + lang
-            + ('| python3 -m jieba -d ' if lang == 'zh' else '')
-            + ('|' + MECAB + '/bin/mecab -O wakati -b 50000 ' if lang == 'ja' else '')
-            + '|' + ROMAN_LC + roman,
-            input=line,
-            encoding='UTF-8',
-            shell=True)
+        REM_NON_PRINT_CHAR
+        + '|' + NORM_PUNC + lang
+        + '|' + DESCAPE
+        + '|' + MOSES_TOKENIZER + lang
+        + ('| python3 -m jieba -d ' if lang == 'zh' else '')
+        + ('|' + MECAB + '/bin/mecab -O wakati -b 50000 ' if lang == 'ja' else '')
+        + '|' + ROMAN_LC + roman,
+        input=line,
+        encoding='UTF-8',
+        shell=True)
     return tok.strip()
 
 
@@ -80,7 +77,7 @@ def Token(inp_fname, out_fname, lang='en',
         # handle some iso3 langauge codes
         if lang in ('cmn', 'wuu', 'yue'):
             lang = 'zh'
-        if lang in ('jpn'):
+        if lang in ('jpn',):
             lang = 'ja'
         if verbose:
             print(' - Tokenizer: {} in language {} {} {}'
@@ -113,6 +110,7 @@ def Token(inp_fname, out_fname, lang='en',
 def BPEfastLoad(line, bpe_codes):
     bpe_vocab = bpe_codes.replace('fcodes', 'fvocab')
     return fastBPE.fastBPE(bpe_codes, bpe_vocab)
+
 
 def BPEfastApplyLine(line, bpe):
     return bpe.apply([line])[0]
@@ -166,7 +164,7 @@ def SplitLines(ifname, of_txt, of_sid):
             words = line.strip().split()
             maxw = max(maxw, len(words))
             for i, word in enumerate(words):
-                if word == '.' and i != len(words)-1:
+                if word == '.' and i != len(words) - 1:
                     if nw > 0:
                         print(' {}'.format(word), file=fp_txt)
                     else:
@@ -174,7 +172,7 @@ def SplitLines(ifname, of_txt, of_sid):
                     # store current sentence ID
                     print('{:d}'.format(nl), file=fp_sid)
                     nl_sp += 1
-                    maxw_sp = max(maxw_sp, nw+1)
+                    maxw_sp = max(maxw_sp, nw + 1)
                     nw = 0
                 else:
                     if nw > 0:
@@ -186,7 +184,7 @@ def SplitLines(ifname, of_txt, of_sid):
                 # handle remainder of sentence
                 print('', file=fp_txt)
                 nl_sp += 1
-                maxw_sp = max(maxw_sp, nw+1)
+                maxw_sp = max(maxw_sp, nw + 1)
             nl += 1
     print(' - Split sentences: {}'.format(ifname))
     print(' -                  lines/max words: {:d}/{:d} -> {:d}/{:d}'
