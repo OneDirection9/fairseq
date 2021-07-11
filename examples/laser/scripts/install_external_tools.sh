@@ -9,13 +9,13 @@
 # is a toolkit to calculate multilingual sentence embeddings
 # and to use them for document classification, bitext filtering
 # and mining
-# 
+#
 #-------------------------------------------------------
 #
-# This bash script installs third party software 
+# This bash script installs third party software
 #
 
-if [ -z ${LASER} ] ; then 
+if [ -z ${LASER} ] ; then
   echo "Please set the environment variable 'LASER'"
   exit
 fi
@@ -84,7 +84,7 @@ InstallMosesTools () {
     f="${moses_non_breakings}.${l}"
     if [ ! -f `basename ${f}` ] ; then
       echo " - download ${f}"
-      wget -q ${moses_git}/${f} 
+      wget -q ${moses_git}/${f}
     fi
   done
 }
@@ -92,7 +92,7 @@ InstallMosesTools () {
 
 ###################################################################
 #
-# FAST BPE 
+# FAST BPE
 #
 ###################################################################
 
@@ -124,16 +124,16 @@ InstallFastBPE () {
 
 InstallMecab () {
   cd ${tools_ext}
-  if [ ! -x mecab/mecab/bin/mecab ] ; then
+  if [ ! -x mecab/bin/mecab ] ; then
     echo " - download mecab from github"
     wget https://github.com/taku910/mecab/archive/master.zip
-    unzip master.zip 
-    #/bin/rm master.zip
+    unzip master.zip
+    /bin/rm master.zip
     if [ ! -s mecab/bin/mecab ] ; then
       mkdir mecab
       cd mecab-master/mecab
       echo " - installing code"
-      ./configure --prefix ${tools_ext}/mecab && make && make install 
+      ./configure --prefix ${tools_ext}/mecab --enable-utf8-only && make && make install
       if [ $? -q 1 ] ; then
         echo "ERROR: installation failed, please install manually"; exit
       fi
@@ -141,8 +141,8 @@ InstallMecab () {
     if [ ! -d mecab/lib/mecab/dic/ipadic ] ; then
       cd ${tools_ext}/mecab-master/mecab-ipadic
       echo " - installing dictionaries"
-      ./configure --prefix ${tools_ext}/mecab --with-mecab-config=${tools_ext}/mecab/bin/mecab-config \
-        && make && make install 
+      ./configure --prefix ${tools_ext}/mecab --with-mecab-config=${tools_ext}/mecab/bin/mecab-config --with-charset=utf8 \
+        && make && make install
       if [ $? -eq 1 ] ; then
         echo "ERROR: compilation failed, please install manually"; exit
       fi
@@ -157,15 +157,29 @@ InstallMecab () {
 #
 ###################################################################
 
+for arg
+do
+  case "$arg" in
+    --install-mecab)
+    install_mecab=1
+    ;;
+  esac
+done
+
 echo "Installing external tools"
 
 InstallMosesTools
 InstallFastBPE
 
-#InstallMecab
-echo ""
-echo "automatic installation of the Japanese tokenizer mecab may be tricky"
-echo "Please install it manually from https://github.com/taku910/mecab"
-echo ""
-echo "The installation directory should be ${LASER}/tools-external/mecab"
-echo ""
+if [[ -n "$install_mecab" ]]; then
+  InstallMecab
+else
+  echo ""
+  echo "Automatic installation of the Japanese tokenizer mecab may be tricky"
+  echo ""
+  echo "Please use --install-mecab argument to try the automatic installation"
+  echo "or install it manually from https://github.com/taku910/mecab"
+  echo ""
+  echo "The installation directory should be ${LASER}/tools-external/mecab"
+  echo ""
+fi
