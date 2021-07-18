@@ -8,11 +8,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from fairseq import options, utils
-
 from fairseq.models import (
     FairseqEncoder,
-    FairseqIncrementalDecoder,
     FairseqEncoderDecoderModel,
+    FairseqIncrementalDecoder,
     register_model,
     register_model_architecture,
 )
@@ -20,8 +19,10 @@ from fairseq.models import (
 
 @register_model("laser_lstm")
 class LSTMModel(FairseqEncoderDecoderModel):
-    def __init__(self, encoder, decoder):
+    def __init__(self, encoder, decoder, controller):
         super().__init__(encoder, decoder)
+
+        self.controller = controller
 
     def forward(
         self,
@@ -36,9 +37,10 @@ class LSTMModel(FairseqEncoderDecoderModel):
         assert target_language_id is not None
 
         src_encoder_out = self.encoder(src_tokens, src_lengths, dataset_name)
-        return self.decoder(
-            prev_output_tokens, src_encoder_out, lang_id=target_language_id
-        )
+        final_hiddens, final_cells = src_encoder_out["encoder_out"][1:3]
+        recons_hiddens, recons_cells = self.controller(final_hiddens, final_cells)
+        src_encoder_out["prev_hiddens_cells"] = (recons_hiddens, recons_cells)
+        return self.decoder(prev_output_tokens, src_encoder_out, lang_id=target_language_id)
 
     @staticmethod
     def add_args(parser):
@@ -196,7 +198,13 @@ class LSTMModel(FairseqEncoderDecoderModel):
             num_langs=num_langs,
             lang_embed_dim=args.decoder_lang_embed_dim,
         )
-        return cls(encoder, decoder)
+        controller = Controller(
+            encoder_layers=args.encoder_layers,
+            decoder_layers=args.decoder_layers,
+            encoder_output_units=encoder.output_units,
+            decoder_hidden_size=args.decoder_hidden_size,
+        )
+        return cls(encoder, decoder, controller)
 
 
 class LSTMEncoder(FairseqEncoder):
@@ -280,9 +288,7 @@ class LSTMEncoder(FairseqEncoder):
         packed_outs, (final_hiddens, final_cells) = self.lstm(packed_x, (h0, c0))
 
         # unpack outputs and apply dropout
-        x, _ = nn.utils.rnn.pad_packed_sequence(
-            packed_outs, padding_value=self.padding_value
-        )
+        x, _ = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=self.padding_value)
         x = F.dropout(x, p=self.dropout_out, training=self.training)
         assert list(x.size()) == [seqlen, bsz, self.output_units]
 
@@ -315,15 +321,11 @@ class LSTMEncoder(FairseqEncoder):
         return {
             "sentemb": sentemb,
             "encoder_out": (x, final_hiddens, final_cells),
-            "encoder_padding_mask": encoder_padding_mask
-            if encoder_padding_mask.any()
-            else None,
+            "encoder_padding_mask": encoder_padding_mask if encoder_padding_mask.any() else None,
         }
 
     def reorder_encoder_out(self, encoder_out_dict, new_order):
-        encoder_out_dict["sentemb"] = encoder_out_dict["sentemb"].index_select(
-            0, new_order
-        )
+        encoder_out_dict["sentemb"] = encoder_out_dict["sentemb"].index_select(0, new_order)
         encoder_out_dict["encoder_out"] = tuple(
             eo.index_select(1, new_order) for eo in encoder_out_dict["encoder_out"]
         )
@@ -384,12 +386,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
             self.additional_fc = Linear(hidden_size, out_embed_dim)
         self.fc_out = Linear(out_embed_dim, num_embeddings, dropout=dropout_out)
 
-        if zero_init:
-            self.sentemb2init = None
-        else:
-            self.sentemb2init = Linear(
-                encoder_output_units, 2 * num_layers * hidden_size
-            )
+        self.zero_init = zero_init
 
         if lang_embed_dim == 0:
             self.embed_lang = None
@@ -398,7 +395,13 @@ class LSTMDecoder(FairseqIncrementalDecoder):
             nn.init.uniform_(self.embed_lang.weight, -0.1, 0.1)
 
     def forward(
-        self, prev_output_tokens, encoder_out_dict, incremental_state=None, lang_id=0
+        self,
+        prev_output_tokens,
+        encoder_out_dict,
+        incremental_state=None,
+        lang_id=0,
+        prev_hiddens=None,
+        prev_cells=None,
     ):
         sentemb = encoder_out_dict["sentemb"]
         encoder_out = encoder_out_dict["encoder_out"]
@@ -425,33 +428,22 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         x = x.transpose(0, 1)
 
         # initialize previous states (or get from cache during incremental generation)
-        cached_state = utils.get_incremental_state(
-            self, incremental_state, "cached_state"
-        )
+        cached_state = utils.get_incremental_state(self, incremental_state, "cached_state")
         if cached_state is not None:
             prev_hiddens, prev_cells, input_feed = cached_state
         else:
             num_layers = len(self.layers)
-            if self.sentemb2init is None:
+            if self.zero_init:
                 prev_hiddens = [
                     x.data.new(bsz, self.hidden_size).zero_() for i in range(num_layers)
                 ]
-                prev_cells = [
-                    x.data.new(bsz, self.hidden_size).zero_() for i in range(num_layers)
-                ]
+                prev_cells = [x.data.new(bsz, self.hidden_size).zero_() for i in range(num_layers)]
             else:
-                init = self.sentemb2init(sentemb)
-                prev_hiddens = [
-                    init[:, (2 * i) * self.hidden_size : (2 * i + 1) * self.hidden_size]
-                    for i in range(num_layers)
-                ]
-                prev_cells = [
-                    init[
-                        :,
-                        (2 * i + 1) * self.hidden_size : (2 * i + 2) * self.hidden_size,
-                    ]
-                    for i in range(num_layers)
-                ]
+                assert (
+                    prev_hiddens is not None and prev_cells is not None
+                ), "must provide prev_hiddens and prev_cells"
+                prev_hiddens = [prev_hiddens[i] for i in range(num_layers)]
+                prev_cells = [prev_cells[i] for i in range(num_layers)]
             input_feed = x.data.new(bsz, self.hidden_size).zero_()
 
         attn_scores = x.data.new(srclen, seqlen, bsz).zero_()
@@ -509,9 +501,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
 
     def reorder_incremental_state(self, incremental_state, new_order):
         super().reorder_incremental_state(incremental_state, new_order)
-        cached_state = utils.get_incremental_state(
-            self, incremental_state, "cached_state"
-        )
+        cached_state = utils.get_incremental_state(self, incremental_state, "cached_state")
         if cached_state is None:
             return
 
@@ -526,6 +516,73 @@ class LSTMDecoder(FairseqIncrementalDecoder):
     def max_positions(self):
         """Maximum output length supported by the decoder."""
         return int(1e5)  # an arbitrary large number
+
+
+class Controller(nn.Module):
+    def __init__(self, encoder_layers, decoder_layers, encoder_output_units, decoder_hidden_size):
+        super(Controller, self).__init__()
+
+        # TODO: consider using
+        #  encoder_layers x encoder_output_units -> decoder_layers x decoder_hidden_size
+
+        self.fc_hidden_map = nn.Linear(encoder_layers, decoder_layers)
+        self.fc_hidden_mu = nn.Linear(encoder_output_units, decoder_hidden_size)
+        self.fc_hidden_var = nn.Linear(encoder_output_units, decoder_hidden_size)
+
+        self.fc_cell_map = nn.Linear(encoder_layers, decoder_layers)
+        self.fc_cell_mu = nn.Linear(encoder_output_units, decoder_hidden_size)
+        self.fc_cell_var = nn.Linear(encoder_output_units, decoder_hidden_size)
+
+    def forward(self, final_hiddens: torch.Tensor, final_cells: torch.Tensor):
+        """
+
+        `B` is batch size.
+        `E` is encoder layers.
+        `D` is decoder layers.
+
+        Args:
+            final_hiddens: tensor of size ``E x B x encoder_output_units``
+            final_cells: tensor of size ``E x B x encoder_output_units``
+
+        Returns:
+            hiddens: tensor of size ``D x B x decoder_hidden_size``
+            cells: tensor of size ``D x B x decoder_hidden_size``
+        """
+        # E x B x encoder_output_units -> B x encoder_output_units x E
+        final_hiddens = final_hiddens.permute(1, 2, 0)
+        final_cells = final_cells.permute(1, 2, 0)
+
+        # B x encoder_output_units x E -> B x encoder_output_units x D
+        hiddens = self.fc_hidden_map(final_hiddens)
+        cells = self.fc_cell_map(final_cells)
+
+        # B x encoder_output_units x D -> D x B x encoder_output_units
+        hiddens = hiddens.permute(2, 0, 1)
+        cells = cells.permute(2, 0, 1)
+
+        # D x B x encoder_output_units -> D x B x decoder_hidden_size
+        hiddens_mu = self.fc_hidden_mu(hiddens)
+        cells_mu = self.fc_cell_mu(cells)
+
+        hiddens_log_var = self.fc_hidden_var(hiddens)
+        cells_log_var = self.fc_cell_var(cells)
+
+        hiddens = self.reparameterize(hiddens_mu, hiddens_log_var)
+        cells = self.reparameterize(cells_mu, cells_log_var)
+
+        return hiddens, cells
+
+    def reparameterize(self, mu: torch.Tensor, log_var: torch.Tensor):
+        """Reparameterization trick to sample from N(mu, var) from N(0,1).
+
+        Args:
+            mu: Mean of the latent Gaussian
+            log_var: Standard deviation of the latent Gaussian
+        """
+        std = torch.exp(0.5 * log_var)
+        eps = torch.randn_like(std)
+
+        return eps * std + mu
 
 
 def Embedding(num_embeddings, embedding_dim, padding_idx):
@@ -564,18 +621,14 @@ def Linear(in_features, out_features, bias=True, dropout=0):
 def base_architecture(args):
     args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
     args.encoder_embed_path = getattr(args, "encoder_embed_path", None)
-    args.encoder_hidden_size = getattr(
-        args, "encoder_hidden_size", args.encoder_embed_dim
-    )
+    args.encoder_hidden_size = getattr(args, "encoder_hidden_size", args.encoder_embed_dim)
     args.encoder_layers = getattr(args, "encoder_layers", 1)
     args.encoder_bidirectional = getattr(args, "encoder_bidirectional", False)
     args.encoder_dropout_in = getattr(args, "encoder_dropout_in", args.dropout)
     args.encoder_dropout_out = getattr(args, "encoder_dropout_out", args.dropout)
     args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 512)
     args.decoder_embed_path = getattr(args, "decoder_embed_path", None)
-    args.decoder_hidden_size = getattr(
-        args, "decoder_hidden_size", args.decoder_embed_dim
-    )
+    args.decoder_hidden_size = getattr(args, "decoder_hidden_size", args.decoder_embed_dim)
     args.decoder_layers = getattr(args, "decoder_layers", 1)
     args.decoder_out_embed_dim = getattr(args, "decoder_out_embed_dim", 512)
     args.decoder_dropout_in = getattr(args, "decoder_dropout_in", args.dropout)
