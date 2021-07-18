@@ -400,8 +400,6 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         encoder_out_dict,
         incremental_state=None,
         lang_id=0,
-        prev_hiddens=None,
-        prev_cells=None,
     ):
         sentemb = encoder_out_dict["sentemb"]
         encoder_out = encoder_out_dict["encoder_out"]
@@ -439,9 +437,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
                 ]
                 prev_cells = [x.data.new(bsz, self.hidden_size).zero_() for i in range(num_layers)]
             else:
-                assert (
-                    prev_hiddens is not None and prev_cells is not None
-                ), "must provide prev_hiddens and prev_cells"
+                prev_hiddens, prev_cells = encoder_out_dict["prev_hiddens_cells"]
                 prev_hiddens = [prev_hiddens[i] for i in range(num_layers)]
                 prev_cells = [prev_cells[i] for i in range(num_layers)]
             input_feed = x.data.new(bsz, self.hidden_size).zero_()
