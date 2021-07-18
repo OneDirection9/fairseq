@@ -37,9 +37,15 @@ class LSTMModel(FairseqEncoderDecoderModel):
         assert target_language_id is not None
 
         src_encoder_out = self.encoder(src_tokens, src_lengths, dataset_name)
+
         final_hiddens, final_cells = src_encoder_out["encoder_out"][1:3]
-        recons_hiddens, recons_cells = self.controller(final_hiddens, final_cells)
+        controller_out = self.controller(final_hiddens, final_cells)
+        hiddens_mu, hiddens_log_var = controller_out["hiddens_mu_var"]
+        cells_mu, cells_log_var = controller_out["cells_mu_var"]
+        recons_hiddens = self.controller.reparameterize(hiddens_mu, hiddens_log_var)
+        recons_cells = self.controller.reparameterize(cells_mu, cells_log_var)
         src_encoder_out["prev_hiddens_cells"] = (recons_hiddens, recons_cells)
+
         return self.decoder(prev_output_tokens, src_encoder_out, lang_id=target_language_id)
 
     @staticmethod
@@ -563,10 +569,10 @@ class Controller(nn.Module):
         hiddens_log_var = self.fc_hidden_var(hiddens)
         cells_log_var = self.fc_cell_var(cells)
 
-        hiddens = self.reparameterize(hiddens_mu, hiddens_log_var)
-        cells = self.reparameterize(cells_mu, cells_log_var)
-
-        return hiddens, cells
+        return {
+            "hiddens_mu_var": (hiddens_mu, hiddens_log_var),
+            "cells_mu_var": (cells_mu, cells_log_var),
+        }
 
     def reparameterize(self, mu: torch.Tensor, log_var: torch.Tensor):
         """Reparameterization trick to sample from N(mu, var) from N(0,1).
