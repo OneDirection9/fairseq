@@ -19,10 +19,8 @@ from fairseq.models import (
 
 @register_model("laser_lstm")
 class LSTMModel(FairseqEncoderDecoderModel):
-    def __init__(self, encoder, decoder, controller):
+    def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
-
-        self.controller = controller
 
     def forward(
         self,
@@ -37,15 +35,6 @@ class LSTMModel(FairseqEncoderDecoderModel):
         assert target_language_id is not None
 
         src_encoder_out = self.encoder(src_tokens, src_lengths, dataset_name)
-
-        final_hiddens, final_cells = src_encoder_out["encoder_out"][1:3]
-        controller_out = self.controller(final_hiddens, final_cells)
-        hiddens_mu, hiddens_log_var = controller_out["hiddens_mu_var"]
-        cells_mu, cells_log_var = controller_out["cells_mu_var"]
-        recons_hiddens = self.controller.reparameterize(hiddens_mu, hiddens_log_var)
-        recons_cells = self.controller.reparameterize(cells_mu, cells_log_var)
-        src_encoder_out["prev_hiddens_cells"] = (recons_hiddens, recons_cells)
-
         return self.decoder(prev_output_tokens, src_encoder_out, lang_id=target_language_id)
 
     @staticmethod
@@ -188,6 +177,8 @@ class LSTMModel(FairseqEncoderDecoderModel):
             bidirectional=args.encoder_bidirectional,
             pretrained_embed=pretrained_encoder_embed,
             fixed_embeddings=args.fixed_embeddings,
+            decoder_layers=args.decoder_layers,
+            decoder_hidden_size=args.decoder_hidden_size,
         )
         decoder = LSTMDecoder(
             dictionary=task.target_dictionary,
@@ -204,13 +195,7 @@ class LSTMModel(FairseqEncoderDecoderModel):
             num_langs=num_langs,
             lang_embed_dim=args.decoder_lang_embed_dim,
         )
-        controller = Controller(
-            encoder_layers=args.encoder_layers,
-            decoder_layers=args.decoder_layers,
-            encoder_output_units=encoder.output_units,
-            decoder_hidden_size=args.decoder_hidden_size,
-        )
-        return cls(encoder, decoder, controller)
+        return cls(encoder, decoder)
 
 
 class LSTMEncoder(FairseqEncoder):
@@ -229,6 +214,8 @@ class LSTMEncoder(FairseqEncoder):
         pretrained_embed=None,
         padding_value=0.0,
         fixed_embeddings=False,
+        decoder_layers=1,
+        decoder_hidden_size=2048,
     ):
         super().__init__(dictionary)
         self.num_layers = num_layers
@@ -259,6 +246,13 @@ class LSTMEncoder(FairseqEncoder):
         self.output_units = hidden_size
         if bidirectional:
             self.output_units *= 2
+
+        self.controller = Controller(
+            encoder_layers=num_layers,
+            encoder_output_units=self.output_units,
+            decoder_layers=decoder_layers,
+            decoder_hidden_size=decoder_hidden_size,
+        )
 
     def forward(self, src_tokens, src_lengths, dataset_name):
         if self.left_pad:
@@ -324,9 +318,12 @@ class LSTMEncoder(FairseqEncoder):
         # Build the sentence embedding by max-pooling over the encoder outputs
         sentemb = x.max(dim=0)[0]
 
+        controller_out = self.controller(final_hiddens, final_cells)
+
         return {
             "sentemb": sentemb,
             "encoder_out": (x, final_hiddens, final_cells),
+            "controller_out": controller_out,
             "encoder_padding_mask": encoder_padding_mask if encoder_padding_mask.any() else None,
         }
 
@@ -335,6 +332,7 @@ class LSTMEncoder(FairseqEncoder):
         encoder_out_dict["encoder_out"] = tuple(
             eo.index_select(1, new_order) for eo in encoder_out_dict["encoder_out"]
         )
+        # TODO: reorder controller_out
         if encoder_out_dict["encoder_padding_mask"] is not None:
             encoder_out_dict["encoder_padding_mask"] = encoder_out_dict[
                 "encoder_padding_mask"
@@ -437,13 +435,16 @@ class LSTMDecoder(FairseqIncrementalDecoder):
             prev_hiddens, prev_cells, input_feed = cached_state
         else:
             num_layers = len(self.layers)
+            assert not self.zero_init
             if self.zero_init:
                 prev_hiddens = [
                     x.data.new(bsz, self.hidden_size).zero_() for i in range(num_layers)
                 ]
                 prev_cells = [x.data.new(bsz, self.hidden_size).zero_() for i in range(num_layers)]
             else:
-                prev_hiddens, prev_cells = encoder_out_dict["prev_hiddens_cells"]
+                controller_out = encoder_out_dict["controller_out"]
+                prev_hiddens = controller_out["hiddens"][0]
+                prev_cells = controller_out["cells"][0]
                 prev_hiddens = [prev_hiddens[i] for i in range(num_layers)]
                 prev_cells = [prev_cells[i] for i in range(num_layers)]
             input_feed = x.data.new(bsz, self.hidden_size).zero_()
@@ -521,8 +522,13 @@ class LSTMDecoder(FairseqIncrementalDecoder):
 
 
 class Controller(nn.Module):
-    def __init__(self, encoder_layers, decoder_layers, encoder_output_units, decoder_hidden_size):
+    def __init__(self, encoder_layers, encoder_output_units, decoder_layers, decoder_hidden_size):
         super(Controller, self).__init__()
+
+        self.encoder_layers = encoder_layers
+        self.encoder_output_units = encoder_output_units
+        self.decoder_layers = decoder_layers
+        self.decoder_hidden_size = decoder_hidden_size
 
         # TODO: consider using
         #  encoder_layers x encoder_output_units -> decoder_layers x decoder_hidden_size
@@ -569,9 +575,12 @@ class Controller(nn.Module):
         hiddens_log_var = self.fc_hidden_var(hiddens)
         cells_log_var = self.fc_cell_var(cells)
 
+        recons_hiddens = self.reparameterize(hiddens_mu, hiddens_log_var)
+        recons_cells = self.reparameterize(cells_mu, cells_log_var)
+
         return {
-            "hiddens_mu_var": (hiddens_mu, hiddens_log_var),
-            "cells_mu_var": (cells_mu, cells_log_var),
+            "hiddens": (recons_hiddens, hiddens_mu, hiddens_log_var),
+            "cells": (recons_cells, cells_mu, cells_log_var),
         }
 
     def reparameterize(self, mu: torch.Tensor, log_var: torch.Tensor):
