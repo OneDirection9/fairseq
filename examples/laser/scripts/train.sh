@@ -9,11 +9,9 @@ save_dir="${LASER}/checkpoints/laser_lstm"
 
 fairseq-train \
   "cfgs/laser.json" \
-  --user-dir laser \
+  --user-dir laser_src \
   --log-interval 100 --log-format simple \
   --task laser --arch laser_lstm \
-  --encoder-path "models/bilstm.93langs.2018-12-26.pt" \
-  --fixed-encoder \
   --save-dir "${save_dir}" \
   --tensorboard-logdir "${save_dir}/log" \
   --fp16 \
