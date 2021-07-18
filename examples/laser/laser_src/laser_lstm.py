@@ -323,7 +323,8 @@ class LSTMEncoder(FairseqEncoder):
         return {
             "sentemb": sentemb,
             "encoder_out": (x, final_hiddens, final_cells),
-            "controller_out": controller_out,
+            "hiddens": controller_out["hiddens"],
+            "cells": controller_out["cells"],
             "encoder_padding_mask": encoder_padding_mask if encoder_padding_mask.any() else None,
         }
 
@@ -332,7 +333,12 @@ class LSTMEncoder(FairseqEncoder):
         encoder_out_dict["encoder_out"] = tuple(
             eo.index_select(1, new_order) for eo in encoder_out_dict["encoder_out"]
         )
-        # TODO: reorder controller_out
+        encoder_out_dict["hiddens"] = tuple(
+            eo.index_select(1, new_order) for eo in encoder_out_dict["hiddens"]
+        )
+        encoder_out_dict["cells"] = tuple(
+            eo.index_select(1, new_order) for eo in encoder_out_dict["cells"]
+        )
         if encoder_out_dict["encoder_padding_mask"] is not None:
             encoder_out_dict["encoder_padding_mask"] = encoder_out_dict[
                 "encoder_padding_mask"
@@ -442,9 +448,8 @@ class LSTMDecoder(FairseqIncrementalDecoder):
                 ]
                 prev_cells = [x.data.new(bsz, self.hidden_size).zero_() for i in range(num_layers)]
             else:
-                controller_out = encoder_out_dict["controller_out"]
-                prev_hiddens = controller_out["hiddens"][0]
-                prev_cells = controller_out["cells"][0]
+                prev_hiddens = encoder_out_dict["hiddens"][0]
+                prev_cells = encoder_out_dict["cells"][0]
                 prev_hiddens = [prev_hiddens[i] for i in range(num_layers)]
                 prev_cells = [prev_cells[i] for i in range(num_layers)]
             input_feed = x.data.new(bsz, self.hidden_size).zero_()
