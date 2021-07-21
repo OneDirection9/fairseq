@@ -34,7 +34,7 @@ def dual_language_collate(
             pad_to_multiple=pad_to_multiple,
         )
 
-    def collate_single_language(key):
+    def collate_language_pair(key):
         id = torch.LongTensor([s["id"] for s in samples])
         src_tokens = merge(
             key,
@@ -77,10 +77,10 @@ def dual_language_collate(
             "target": target,
         }
 
-    batch_src_lang = collate_single_language("source")
-    batch_tgt_lang = collate_single_language("target")
+    src_lang_pair = collate_language_pair("source")
+    tgt_lang_pair = collate_language_pair("target")
 
-    batch = {"batch_src_lang": batch_src_lang, "batch_tgt_lang": batch_tgt_lang}
+    batch = {"source_lang_pair": src_lang_pair, "target_lang_pair": tgt_lang_pair}
     return batch
 
 

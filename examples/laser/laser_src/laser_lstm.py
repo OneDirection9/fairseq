@@ -19,8 +19,10 @@ from fairseq.models import (
 
 @register_model("laser_lstm")
 class LSTMModel(FairseqEncoderDecoderModel):
-    def __init__(self, encoder, decoder):
+    def __init__(self, encoder, decoder, controller):
         super().__init__(encoder, decoder)
+
+        self.controller = controller
 
     def forward(
         self,
@@ -35,7 +37,10 @@ class LSTMModel(FairseqEncoderDecoderModel):
         assert target_language_id is not None
 
         src_encoder_out = self.encoder(src_tokens, src_lengths, dataset_name)
-        return self.decoder(prev_output_tokens, src_encoder_out, lang_id=target_language_id)
+        final_hiddens, final_cells = src_encoder_out["encoder_out"][1:]
+        controller_out = self.controller(final_hiddens, final_cells)
+        decoder_out = self.decoder(prev_output_tokens, src_encoder_out, lang_id=target_language_id)
+        return controller_out, decoder_out
 
     @staticmethod
     def add_args(parser):
@@ -177,8 +182,6 @@ class LSTMModel(FairseqEncoderDecoderModel):
             bidirectional=args.encoder_bidirectional,
             pretrained_embed=pretrained_encoder_embed,
             fixed_embeddings=args.fixed_embeddings,
-            decoder_layers=args.decoder_layers,
-            decoder_hidden_size=args.decoder_hidden_size,
         )
         decoder = LSTMDecoder(
             dictionary=task.target_dictionary,
@@ -195,7 +198,13 @@ class LSTMModel(FairseqEncoderDecoderModel):
             num_langs=num_langs,
             lang_embed_dim=args.decoder_lang_embed_dim,
         )
-        return cls(encoder, decoder)
+        controller = Controller(
+            input_dim=encoder.output_units,
+            hidden_dim=args.controller_hidden_dim,
+            latent_dim=args.controller_latent_dim,
+            output_dim=args.decoder_layers * args.decoder_hidden_size * 2,
+        )
+        return cls(encoder, decoder, controller)
 
 
 class LSTMEncoder(FairseqEncoder):
@@ -214,8 +223,6 @@ class LSTMEncoder(FairseqEncoder):
         pretrained_embed=None,
         padding_value=0.0,
         fixed_embeddings=False,
-        decoder_layers=1,
-        decoder_hidden_size=2048,
     ):
         super().__init__(dictionary)
         self.num_layers = num_layers
@@ -246,13 +253,6 @@ class LSTMEncoder(FairseqEncoder):
         self.output_units = hidden_size
         if bidirectional:
             self.output_units *= 2
-
-        self.controller = Controller(
-            encoder_layers=num_layers,
-            encoder_output_units=self.output_units,
-            decoder_layers=decoder_layers,
-            decoder_hidden_size=decoder_hidden_size,
-        )
 
     def forward(self, src_tokens, src_lengths, dataset_name):
         if self.left_pad:
@@ -318,13 +318,9 @@ class LSTMEncoder(FairseqEncoder):
         # Build the sentence embedding by max-pooling over the encoder outputs
         sentemb = x.max(dim=0)[0]
 
-        controller_out = self.controller(final_hiddens, final_cells)
-
         return {
             "sentemb": sentemb,
             "encoder_out": (x, final_hiddens, final_cells),
-            "hiddens": controller_out["hiddens"],
-            "cells": controller_out["cells"],
             "encoder_padding_mask": encoder_padding_mask if encoder_padding_mask.any() else None,
         }
 
@@ -332,12 +328,6 @@ class LSTMEncoder(FairseqEncoder):
         encoder_out_dict["sentemb"] = encoder_out_dict["sentemb"].index_select(0, new_order)
         encoder_out_dict["encoder_out"] = tuple(
             eo.index_select(1, new_order) for eo in encoder_out_dict["encoder_out"]
-        )
-        encoder_out_dict["hiddens"] = tuple(
-            eo.index_select(1, new_order) for eo in encoder_out_dict["hiddens"]
-        )
-        encoder_out_dict["cells"] = tuple(
-            eo.index_select(1, new_order) for eo in encoder_out_dict["cells"]
         )
         if encoder_out_dict["encoder_padding_mask"] is not None:
             encoder_out_dict["encoder_padding_mask"] = encoder_out_dict[
@@ -409,6 +399,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         prev_output_tokens,
         encoder_out_dict,
         incremental_state=None,
+        hc_init=None,
         lang_id=0,
     ):
         sentemb = encoder_out_dict["sentemb"]
@@ -448,10 +439,19 @@ class LSTMDecoder(FairseqIncrementalDecoder):
                 ]
                 prev_cells = [x.data.new(bsz, self.hidden_size).zero_() for i in range(num_layers)]
             else:
-                prev_hiddens = encoder_out_dict["hiddens"][0]
-                prev_cells = encoder_out_dict["cells"][0]
-                prev_hiddens = [prev_hiddens[i] for i in range(num_layers)]
-                prev_cells = [prev_cells[i] for i in range(num_layers)]
+                assert hc_init is not None
+                init = hc_init
+                prev_hiddens = [
+                    init[:, (2 * i) * self.hidden_size : (2 * i + 1) * self.hidden_size]
+                    for i in range(num_layers)
+                ]
+                prev_cells = [
+                    init[
+                        :,
+                        (2 * i + 1) * self.hidden_size : (2 * i + 2) * self.hidden_size,
+                    ]
+                    for i in range(num_layers)
+                ]
             input_feed = x.data.new(bsz, self.hidden_size).zero_()
 
         attn_scores = x.data.new(srclen, seqlen, bsz).zero_()
@@ -527,24 +527,23 @@ class LSTMDecoder(FairseqIncrementalDecoder):
 
 
 class Controller(nn.Module):
-    def __init__(self, encoder_layers, encoder_output_units, decoder_layers, decoder_hidden_size):
+    def __init__(self, input_dim, hidden_dim, latent_dim, output_dim):
         super(Controller, self).__init__()
 
-        self.encoder_layers = encoder_layers
-        self.encoder_output_units = encoder_output_units
-        self.decoder_layers = decoder_layers
-        self.decoder_hidden_size = decoder_hidden_size
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.latent_dim = latent_dim
+        self.output_dim = output_dim
 
-        # TODO: consider using
-        #  encoder_layers x encoder_output_units -> decoder_layers x decoder_hidden_size
+        self.fc_hidden = nn.Linear(input_dim, hidden_dim)
+        self.fc_hidden_mu = nn.Linear(hidden_dim, latent_dim)
+        self.fc_hidden_var = nn.Linear(hidden_dim, latent_dim)
+        self.fc_hidden_out = nn.Linear(latent_dim, output_dim)
 
-        self.fc_hidden_map = nn.Linear(encoder_layers, decoder_layers)
-        self.fc_hidden_mu = nn.Linear(encoder_output_units, decoder_hidden_size)
-        self.fc_hidden_var = nn.Linear(encoder_output_units, decoder_hidden_size)
-
-        self.fc_cell_map = nn.Linear(encoder_layers, decoder_layers)
-        self.fc_cell_mu = nn.Linear(encoder_output_units, decoder_hidden_size)
-        self.fc_cell_var = nn.Linear(encoder_output_units, decoder_hidden_size)
+        self.fc_cell = nn.Linear(input_dim, hidden_dim)
+        self.fc_cell_mu = nn.Linear(hidden_dim, latent_dim)
+        self.fc_cell_var = nn.Linear(hidden_dim, latent_dim)
+        self.fc_cell_out = nn.Linear(latent_dim, output_dim)
 
     def forward(self, final_hiddens: torch.Tensor, final_cells: torch.Tensor):
         """
@@ -554,39 +553,36 @@ class Controller(nn.Module):
         `D` is decoder layers.
 
         Args:
-            final_hiddens: tensor of size ``E x B x encoder_output_units``
-            final_cells: tensor of size ``E x B x encoder_output_units``
+            final_hiddens: tensor of size ``E x B x H_in``
+            final_cells: tensor of size ``E x B x H_in``
 
         Returns:
-            hiddens: tensor of size ``D x B x decoder_hidden_size``
-            cells: tensor of size ``D x B x decoder_hidden_size``
+            hiddens: tensor of size ``B x H_out``
+            cells: tensor of size ``B x H_out``
         """
-        # E x B x encoder_output_units -> B x encoder_output_units x E
-        final_hiddens = final_hiddens.permute(1, 2, 0)
-        final_cells = final_cells.permute(1, 2, 0)
+        # E x B x H_in -> B x E x H_in -> B x (E * H_in)
+        final_hiddens = final_hiddens.transpose(0, 1).flatten(start_dim=1)
+        final_cells = final_cells.transpose(0, 1).flatten(start_dim=1)
 
-        # B x encoder_output_units x E -> B x encoder_output_units x D
-        hiddens = self.fc_hidden_map(final_hiddens)
-        cells = self.fc_cell_map(final_cells)
+        # B x (E * H_in) -> B x hidden_dim
+        hiddens = self.fc_hidden(final_hiddens)
+        cells = self.fc_cell(final_cells)
 
-        # B x encoder_output_units x D -> D x B x encoder_output_units
-        hiddens = hiddens.permute(2, 0, 1)
-        cells = cells.permute(2, 0, 1)
-
-        # D x B x encoder_output_units -> D x B x decoder_hidden_size
+        # B x hidden_dim -> B x latent_dim
         hiddens_mu = self.fc_hidden_mu(hiddens)
+        hiddens_var = self.fc_hidden_var(hiddens)
+
         cells_mu = self.fc_cell_mu(cells)
+        cells_var = self.fc_cell_var(cells)
 
-        hiddens_log_var = self.fc_hidden_var(hiddens)
-        cells_log_var = self.fc_cell_var(cells)
+        hiddens_param = self.reparameterize(hiddens_mu, hiddens_var)
+        cells_param = self.reparameterize(cells_mu, cells_var)
 
-        recons_hiddens = self.reparameterize(hiddens_mu, hiddens_log_var)
-        recons_cells = self.reparameterize(cells_mu, cells_log_var)
+        # B x latent_dim -> B x H_out
+        recons_hiddens = self.fc_hidden_out(hiddens_param)
+        recons_cells = self.fc_cell_out(cells_param)
 
-        return {
-            "hiddens": (recons_hiddens, hiddens_mu, hiddens_log_var),
-            "cells": (recons_cells, cells_mu, cells_log_var),
-        }
+        return {"recons_hiddens": recons_hiddens, "recons_cells": recons_cells}
 
     def reparameterize(self, mu: torch.Tensor, log_var: torch.Tensor):
         """Reparameterization trick to sample from N(mu, var) from N(0,1).
@@ -652,3 +648,6 @@ def base_architecture(args):
     args.decoder_zero_init = getattr(args, "decoder_zero_init", "0")
     args.decoder_lang_embed_dim = getattr(args, "decoder_lang_embed_dim", 0)
     args.fixed_embeddings = getattr(args, "fixed_embeddings", False)
+
+    args.controller_latent_dim = getattr(args, "controller_latent_dim", 1024)
+    args.controller_hidden_dim = getattr(args, "controller_hidden_dim", 1024)
