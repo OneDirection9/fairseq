@@ -4,27 +4,17 @@
 # LICENSE file in the root directory of this source tree.
 
 
-from collections import OrderedDict, defaultdict
 import json
-import os
 import logging
 from argparse import ArgumentError
+import os
+from collections import OrderedDict, defaultdict
 
-from fairseq import options, models
-from fairseq.data import (
-    data_utils,
-    Dictionary,
-    LanguagePairDataset,
-    IndexedDataset,
-    FairseqDataset,
-)
-from .multitask_data_utils import (
-    MultitaskDatasetWrapper,
-    MultidatasetEpochBatchIterator,
-)
-
-
+from fairseq import models, options
+from fairseq.data import Dictionary, FairseqDataset, IndexedDataset, data_utils
 from fairseq.tasks import LegacyFairseqTask, register_task
+from .bilanguage_pair_dataset import BilanguagePairDataset
+from .multitask_data_utils import MultidatasetEpochBatchIterator, MultitaskDatasetWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -34,18 +24,14 @@ class LaserTask(LegacyFairseqTask):
     @staticmethod
     def add_args(parser):
         """Add task-specific arguments to the parser."""
-        parser.add_argument(
-            "configfile", metavar="PATH", help="dataset configuration file in json"
-        )
+        parser.add_argument("configfile", metavar="PATH", help="dataset configuration file in json")
         parser.add_argument(
             "--weighting-alpha",
             type=float,
             default=None,
             help="alpha for automatic weighting",
         )
-        parser.add_argument(
-            "--raw-text", action="store_true", help="load raw text dataset"
-        )
+        parser.add_argument("--raw-text", action="store_true", help="load raw text dataset")
         parser.add_argument(
             "--left-pad-source",
             default="True",
@@ -99,14 +85,10 @@ class LaserTask(LegacyFairseqTask):
         tgt_dictionary = Dictionary.load(config["tgt_vocab"])
 
         logger.info(
-            "| src Dictionary {} : {} types".format(
-                config["src_vocab"], len(src_dictionary)
-            )
+            "| src Dictionary {} : {} types".format(config["src_vocab"], len(src_dictionary))
         )
         logger.info(
-            "| tgt Dictionary {} : {} types".format(
-                config["tgt_vocab"], len(tgt_dictionary)
-            )
+            "| tgt Dictionary {} : {} types".format(config["tgt_vocab"], len(tgt_dictionary))
         )
 
         return cls(args, config, src_dictionary, tgt_dictionary, num_tasks)
@@ -138,9 +120,7 @@ class LaserTask(LegacyFairseqTask):
             return
 
         if split not in self.config:
-            raise FileNotFoundError(
-                "Dataset not found in config file: {}".format(split)
-            )
+            raise FileNotFoundError("Dataset not found in config file: {}".format(split))
 
         size_by_corpus = defaultdict(int)
         size_sum = 0
@@ -155,20 +135,16 @@ class LaserTask(LegacyFairseqTask):
 
             logger.info(f"loading... {pair_datasets_key}")
             if "src" in dataset_config:
-                src_dataset = indexed_dataset(
-                    dataset_config["src"], self.src_dictionary
-                )
+                src_dataset = indexed_dataset(dataset_config["src"], self.src_dictionary)
             else:
                 src_dataset = None
 
             if "tgt" in dataset_config:
-                tgt_dataset = indexed_dataset(
-                    dataset_config["tgt"], self.tgt_dictionary
-                )
+                tgt_dataset = indexed_dataset(dataset_config["tgt"], self.tgt_dictionary)
             else:
                 tgt_dataset = None
 
-            dataset = LanguagePairDataset(
+            dataset = BilanguagePairDataset(
                 src_dataset,
                 src_dataset.sizes,
                 self.src_dictionary,
@@ -211,10 +187,7 @@ class LaserTask(LegacyFairseqTask):
                     weighted_freqs_sum += val ** self.args.weighting_alpha
 
             for key in freq_per_dataset:
-                val = (
-                    freq_per_dataset[key] ** self.args.weighting_alpha
-                    / weighted_freqs_sum
-                )
+                val = freq_per_dataset[key] ** self.args.weighting_alpha / weighted_freqs_sum
                 vmin = min(vmin, val)
                 vmax = max(vmax, val)
                 weighted_freq_per_dataset[key] = val
@@ -236,12 +209,12 @@ class LaserTask(LegacyFairseqTask):
             initial_pair_datasets_key = pair_datasets_key
 
             while sample >= 1.0:
-                assert (
-                    pair_datasets_key not in pair_datasets
-                ), f"{pair_datasets_key} already in"
+                assert pair_datasets_key not in pair_datasets, f"{pair_datasets_key} already in"
                 size_sum_with_subsampling += len(dataset)
                 pair_datasets[pair_datasets_key] = MultitaskDatasetWrapper(
-                    dataset, dataset_config.get("id", 0), 1.0, name=pair_datasets_key
+                    dataset,
+                    1.0,
+                    name=pair_datasets_key,
                 )
                 size_sum += len(dataset)
                 sample -= 1.0
@@ -250,13 +223,15 @@ class LaserTask(LegacyFairseqTask):
             assert sample < 1e-6, f"sample remains > 0 {pair_datasets_key}"
 
             logger.info(
-                f"added pair {initial_pair_datasets_key} length {len(dataset)} new_length = {len(dataset)*initial_sample}"
+                f"added pair {initial_pair_datasets_key} length {len(dataset)} "
+                f"new_length = {len(dataset)*initial_sample}"
             )
             size_by_corpus[corpus_name] += len(dataset)
 
         self.datasets[split] = pair_datasets
         logger.info(
-            f"Datasets number = {len(self.datasets[split])} size = {size_sum} size_sum_with_subsampling = {size_sum_with_subsampling}"
+            f"Datasets number = {len(self.datasets[split])} size = {size_sum} "
+            f"size_sum_with_subsampling = {size_sum_with_subsampling}"
         )
 
     @property
@@ -304,9 +279,7 @@ class LaserTask(LegacyFairseqTask):
         if max_positions is not None:
             for key, dt in dataset.items():
                 logger.info(f"\t filter_by_size {key}")
-                indices[key], ignored = dt.filter_indices_by_size(
-                    indices[key], max_positions
-                )
+                indices[key], ignored = dt.filter_indices_by_size(indices[key], max_positions)
 
         for key, dt in dataset.items():
             logger.info(f"\t batch_by_size {key}")

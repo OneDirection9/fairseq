@@ -69,9 +69,7 @@ class MultidatasetEpochBatchIterator(iterators.EpochBatchIterating):
         # `self.epoch += 1` should be handled by underlying `EpochBatchIterator`s.
         return MultiItr(
             [
-                itr.next_epoch_itr(
-                    shuffle=shuffle, fix_batches_to_gpus=fix_batches_to_gpus
-                )
+                itr.next_epoch_itr(shuffle=shuffle, fix_batches_to_gpus=fix_batches_to_gpus)
                 for itr in self.iterators
             ]
         )
@@ -108,17 +106,16 @@ class MultidatasetEpochBatchIterator(iterators.EpochBatchIterating):
 class MultitaskDatasetWrapper(BaseWrapperDataset):
     """A wrapper for a multitask dataset."""
 
-    def __init__(self, dataset, target_language_id, sample=1.0, name=""):
+    def __init__(self, dataset, sample=1.0, name=""):
         super().__init__(dataset)
-        self.target_language_id = target_language_id
         self.sample = sample
         self.name = name
 
     def collater(self, *args, **kwargs):
         ans = self.dataset.collater(*args, **kwargs)
-        if "net_input" in ans:
-            ans["net_input"]["target_language_id"] = self.target_language_id
-            ans["net_input"]["dataset_name"] = self.name
+
+        ans["source_lang_pair"]["net_input"]["dataset_name"] = self.name
+        ans["target_lang_pair"]["net_input"]["dataset_name"] = self.name
         return ans
 
     def num_tokens(self, *args, **kwargs):
