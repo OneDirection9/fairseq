@@ -77,15 +77,14 @@ def dual_language_collate(
             "target": target,
         }
 
-    batch_lang_src = collate_single_language("source")
-    batch_lang_tgt = collate_single_language("target")
+    batch_src_lang = collate_single_language("source")
+    batch_tgt_lang = collate_single_language("target")
 
-    batch = {"batch_lang_src": batch_lang_src, "batch_lang_tgt": batch_lang_tgt}
-
+    batch = {"batch_src_lang": batch_src_lang, "batch_tgt_lang": batch_tgt_lang}
     return batch
 
 
-class DualLanguagePairDataset(LanguagePairDataset):
+class BilanguagePairDataset(LanguagePairDataset):
     def collater(self, samples, pad_to_length=None):
         res = dual_language_collate(
             samples,
@@ -97,25 +96,5 @@ class DualLanguagePairDataset(LanguagePairDataset):
             pad_to_length=pad_to_length,
             pad_to_multiple=self.pad_to_multiple,
         )
-
-        if self.src_lang_id is not None:
-            src_tokens = res["batch_lang_src"]["net_input"]["src_tokens"]
-            bsz = src_tokens.size(0)
-            res["batch_lang_src"]["net_input"]["src_lang_id"] = (
-                torch.LongTensor([[self.src_lang_id]]).expand(bsz, 1).to(src_tokens)
-            )
-            res["batch_lang_src"]["net_input"]["tgt_lang_id"] = (
-                torch.LongTensor([[self.src_lang_id]]).expand(bsz, 1).to(src_tokens)
-            )
-
-        if self.tgt_lang_id is not None:
-            src_tokens = res["batch_lang_tgt"]["net_input"]["src_tokens"]
-            bsz = src_tokens.size(0)
-            res["batch_lang_tgt"]["net_input"]["src_lang_id"] = (
-                torch.LongTensor([[self.tgt_lang_id]]).expand(bsz, 1).to(src_tokens)
-            )
-            res["batch_lang_tgt"]["net_input"]["tgt_lang_id"] = (
-                torch.LongTensor([[self.tgt_lang_id]]).expand(bsz, 1).to(src_tokens)
-            )
 
         return res
