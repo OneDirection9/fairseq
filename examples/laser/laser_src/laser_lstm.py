@@ -19,10 +19,8 @@ from fairseq.models import (
 
 @register_model("laser_lstm")
 class LSTMModel(FairseqEncoderDecoderModel):
-    def __init__(self, encoder, source_lang_decoder, target_language_decoder):
-        super().__init__(encoder, source_lang_decoder)
-
-        self.target_language_decoder = target_language_decoder
+    def __init__(self, encoder, decoder):
+        super().__init__(encoder, decoder)
 
     def forward(self, source_language_pair_input, target_language_pair_input):
         source_encoder_out = self.encoder(
@@ -30,28 +28,24 @@ class LSTMModel(FairseqEncoderDecoderModel):
             source_language_pair_input["src_lengths"],
             source_language_pair_input["dataset_name"],
         )
-        source_decoder_out = self.decoder(
-            source_language_pair_input["prev_output_tokens"], source_encoder_out
-        )
-        source_lang_model_out = {
-            "encoder_out": source_encoder_out,
-            "decoder_out": source_decoder_out,
-        }
-
         target_encoder_out = self.encoder(
             target_language_pair_input["src_tokens"],
             target_language_pair_input["src_lengths"],
             target_language_pair_input["dataset_name"],
         )
-        target_decoder_out = self.target_language_decoder(
-            target_language_pair_input["prev_output_tokens"], target_encoder_out
-        )
-        target_lang_model_out = {
-            "encoder_out": target_encoder_out,
-            "decoder_out": target_decoder_out,
-        }
 
-        return source_lang_model_out, target_lang_model_out
+        decoder_out = self.decoder(
+            source_language_pair_input["prev_output_tokens"],
+            source_encoder_out,
+            target_language_pair_input["prev_output_tokens"],
+            target_encoder_out,
+        )
+
+        return {
+            **decoder_out,
+            "source_encoder_out": source_encoder_out,
+            "target_encoder_out": target_encoder_out,
+        }
 
     @staticmethod
     def add_args(parser):
@@ -195,7 +189,9 @@ class LSTMModel(FairseqEncoderDecoderModel):
             controller_latent_dim=args.controller_latent_dim,
             controller_output_dim=args.decoder_layers * args.decoder_hidden_size * 2,
         )
-        source_lang_decoder = LSTMDecoder(
+
+        assert task.source_dictionary == task.target_dictionary
+        decoder = MultiDecoder(
             dictionary=task.source_dictionary,
             embed_dim=args.decoder_embed_dim,
             hidden_size=args.decoder_hidden_size,
@@ -208,20 +204,7 @@ class LSTMModel(FairseqEncoderDecoderModel):
             encoder_output_units=encoder.output_units,
             pretrained_embed=pretrained_decoder_embed,
         )
-        target_lang_decoder = LSTMDecoder(
-            dictionary=task.target_dictionary,
-            embed_dim=args.decoder_embed_dim,
-            hidden_size=args.decoder_hidden_size,
-            out_embed_dim=args.decoder_out_embed_dim,
-            num_layers=args.decoder_layers,
-            dropout_in=args.decoder_dropout_in,
-            dropout_out=args.decoder_dropout_out,
-            zero_init=options.eval_bool(args.decoder_zero_init),
-            encoder_embed_dim=args.encoder_embed_dim,
-            encoder_output_units=encoder.output_units,
-            pretrained_embed=pretrained_decoder_embed,
-        )
-        return cls(encoder, source_lang_decoder, target_lang_decoder)
+        return cls(encoder, decoder)
 
 
 class LSTMEncoder(FairseqEncoder):
@@ -370,6 +353,77 @@ class LSTMEncoder(FairseqEncoder):
 
     def max_positions(self):
         """Maximum input length supported by the encoder."""
+        return int(1e5)  # an arbitrary large number
+
+
+class MultiDecoder(FairseqIncrementalDecoder):
+    def __init__(
+        self,
+        dictionary,
+        embed_dim=512,
+        hidden_size=512,
+        out_embed_dim=512,
+        num_layers=1,
+        dropout_in=0.1,
+        dropout_out=0.1,
+        zero_init=False,
+        encoder_embed_dim=512,
+        encoder_output_units=512,
+        pretrained_embed=None,
+    ):
+        super(MultiDecoder, self).__init__(dictionary)
+
+        self.source_decoder = LSTMDecoder(
+            dictionary=dictionary,
+            embed_dim=embed_dim,
+            hidden_size=hidden_size,
+            out_embed_dim=out_embed_dim,
+            num_layers=num_layers,
+            dropout_in=dropout_in,
+            dropout_out=dropout_out,
+            zero_init=zero_init,
+            encoder_embed_dim=encoder_embed_dim,
+            encoder_output_units=encoder_output_units,
+            pretrained_embed=pretrained_embed,
+        )
+
+        self.target_decoder = LSTMDecoder(
+            dictionary=dictionary,
+            embed_dim=embed_dim,
+            hidden_size=hidden_size,
+            out_embed_dim=out_embed_dim,
+            num_layers=num_layers,
+            dropout_in=dropout_in,
+            dropout_out=dropout_out,
+            zero_init=zero_init,
+            encoder_embed_dim=encoder_embed_dim,
+            encoder_output_units=encoder_output_units,
+            pretrained_embed=pretrained_embed,
+        )
+
+    def forward(
+        self,
+        source_prev_output_tokens,
+        source_encoder_out,
+        target_prev_output_tokens,
+        target_encoder_out,
+    ):
+        source_decoder_out = self.source_decoder(
+            source_prev_output_tokens,
+            source_encoder_out,
+        )
+        target_decoder_out = self.target_decoder(target_prev_output_tokens, target_encoder_out)
+        return {
+            "source_decoder_out": source_decoder_out,
+            "target_decoder_out": target_decoder_out,
+        }
+
+    def reorder_incremental_state(self, incremental_state, new_order):
+        self.source_decoder.reorder_incremental_state(incremental_state, new_order)
+        self.target_decoder.reorder_incremental_state(incremental_state, new_order)
+
+    def max_positions(self):
+        """Maximum output length supported by the decoder."""
         return int(1e5)  # an arbitrary large number
 
 
