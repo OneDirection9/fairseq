@@ -19,25 +19,39 @@ from fairseq.models import (
 
 @register_model("laser_lstm")
 class LSTMModel(FairseqEncoderDecoderModel):
-    def __init__(self, encoder, decoder, controller):
-        super().__init__(encoder, decoder)
+    def __init__(self, encoder, source_lang_decoder, target_language_decoder):
+        super().__init__(encoder, source_lang_decoder)
 
-        self.controller = controller
+        self.target_language_decoder = target_language_decoder
 
-    def forward(
-        self,
-        src_tokens,
-        src_lengths,
-        prev_output_tokens=None,
-        tgt_tokens=None,
-        tgt_lengths=None,
-        dataset_name="",
-    ):
-        src_encoder_out = self.encoder(src_tokens, src_lengths, dataset_name)
-        final_hiddens, final_cells = src_encoder_out["encoder_out"][1:]
-        controller_out = self.controller(final_hiddens, final_cells)
-        decoder_out = self.decoder(prev_output_tokens, src_encoder_out)
-        return controller_out, decoder_out
+    def forward(self, source_language_pair_input, target_language_pair_input):
+        source_encoder_out = self.encoder(
+            source_language_pair_input["src_tokens"],
+            source_language_pair_input["src_lengths"],
+            source_language_pair_input["dataset_name"],
+        )
+        source_decoder_out = self.decoder(
+            source_language_pair_input["prev_output_tokens"], source_encoder_out
+        )
+        source_lang_model_out = {
+            "encoder_out": source_encoder_out,
+            "decoder_out": source_decoder_out,
+        }
+
+        target_encoder_out = self.encoder(
+            target_language_pair_input["src_tokens"],
+            target_language_pair_input["src_lengths"],
+            target_language_pair_input["dataset_name"],
+        )
+        target_decoder_out = self.target_language_decoder(
+            target_language_pair_input["prev_output_tokens"], target_encoder_out
+        )
+        target_lang_model_out = {
+            "encoder_out": target_encoder_out,
+            "decoder_out": target_decoder_out,
+        }
+
+        return source_lang_model_out, target_lang_model_out
 
     @staticmethod
     def add_args(parser):
@@ -177,8 +191,24 @@ class LSTMModel(FairseqEncoderDecoderModel):
             bidirectional=args.encoder_bidirectional,
             pretrained_embed=pretrained_encoder_embed,
             fixed_embeddings=args.fixed_embeddings,
+            controller_hidden_dim=args.controller_hidden_dim,
+            controller_latent_dim=args.controller_latent_dim,
+            controller_output_dim=args.decoder_layers * args.decoder_hidden_size * 2,
         )
-        decoder = LSTMDecoder(
+        source_lang_decoder = LSTMDecoder(
+            dictionary=task.source_dictionary,
+            embed_dim=args.decoder_embed_dim,
+            hidden_size=args.decoder_hidden_size,
+            out_embed_dim=args.decoder_out_embed_dim,
+            num_layers=args.decoder_layers,
+            dropout_in=args.decoder_dropout_in,
+            dropout_out=args.decoder_dropout_out,
+            zero_init=options.eval_bool(args.decoder_zero_init),
+            encoder_embed_dim=args.encoder_embed_dim,
+            encoder_output_units=encoder.output_units,
+            pretrained_embed=pretrained_decoder_embed,
+        )
+        target_lang_decoder = LSTMDecoder(
             dictionary=task.target_dictionary,
             embed_dim=args.decoder_embed_dim,
             hidden_size=args.decoder_hidden_size,
@@ -191,13 +221,7 @@ class LSTMModel(FairseqEncoderDecoderModel):
             encoder_output_units=encoder.output_units,
             pretrained_embed=pretrained_decoder_embed,
         )
-        controller = Controller(
-            input_dim=encoder.output_units,
-            hidden_dim=args.controller_hidden_dim,
-            latent_dim=args.controller_latent_dim,
-            output_dim=args.decoder_layers * args.decoder_hidden_size * 2,
-        )
-        return cls(encoder, decoder, controller)
+        return cls(encoder, source_lang_decoder, target_lang_decoder)
 
 
 class LSTMEncoder(FairseqEncoder):
@@ -216,6 +240,9 @@ class LSTMEncoder(FairseqEncoder):
         pretrained_embed=None,
         padding_value=0.0,
         fixed_embeddings=False,
+        controller_hidden_dim=512,
+        controller_latent_dim=512,
+        controller_output_dim=1024,
     ):
         super().__init__(dictionary)
         self.num_layers = num_layers
@@ -246,6 +273,13 @@ class LSTMEncoder(FairseqEncoder):
         self.output_units = hidden_size
         if bidirectional:
             self.output_units *= 2
+
+        self.controller = Controller(
+            input_dim=num_layers * self.output_units,
+            hidden_dim=controller_hidden_dim,
+            latent_dim=controller_latent_dim,
+            output_dim=controller_output_dim,
+        )
 
     def forward(self, src_tokens, src_lengths, dataset_name):
         if self.left_pad:
@@ -311,9 +345,12 @@ class LSTMEncoder(FairseqEncoder):
         # Build the sentence embedding by max-pooling over the encoder outputs
         sentemb = x.max(dim=0)[0]
 
+        controller_out = self.controller(final_hiddens, final_cells)
+
         return {
             "sentemb": sentemb,
             "encoder_out": (x, final_hiddens, final_cells),
+            "controller_out": controller_out,
             "encoder_padding_mask": encoder_padding_mask if encoder_padding_mask.any() else None,
         }
 
@@ -322,6 +359,9 @@ class LSTMEncoder(FairseqEncoder):
         encoder_out_dict["encoder_out"] = tuple(
             eo.index_select(1, new_order) for eo in encoder_out_dict["encoder_out"]
         )
+        encoder_out_dict["controller_out"] = {
+            k: v.index_select(0, new_order) for k, v in encoder_out_dict["controller_out"].items()
+        }
         if encoder_out_dict["encoder_padding_mask"] is not None:
             encoder_out_dict["encoder_padding_mask"] = encoder_out_dict[
                 "encoder_padding_mask"
@@ -382,7 +422,6 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         prev_output_tokens,
         encoder_out_dict,
         incremental_state=None,
-        hc_init=None,
     ):
         sentemb = encoder_out_dict["sentemb"]
         encoder_out = encoder_out_dict["encoder_out"]
@@ -408,15 +447,13 @@ class LSTMDecoder(FairseqIncrementalDecoder):
             prev_hiddens, prev_cells, input_feed = cached_state
         else:
             num_layers = len(self.layers)
-            assert not self.zero_init
             if self.zero_init:
                 prev_hiddens = [
                     x.data.new(bsz, self.hidden_size).zero_() for i in range(num_layers)
                 ]
                 prev_cells = [x.data.new(bsz, self.hidden_size).zero_() for i in range(num_layers)]
             else:
-                assert hc_init is not None
-                init = hc_init
+                init = encoder_out_dict["controller_out"]["recons"]
                 prev_hiddens = [
                     init[:, (2 * i) * self.hidden_size : (2 * i + 1) * self.hidden_size]
                     for i in range(num_layers)
@@ -509,14 +546,13 @@ class Controller(nn.Module):
         self.output_dim = output_dim
 
         self.fc_hidden = nn.Linear(input_dim, hidden_dim)
-        self.fc_hidden_mu = nn.Linear(hidden_dim, latent_dim)
-        self.fc_hidden_var = nn.Linear(hidden_dim, latent_dim)
-        self.fc_hidden_out = nn.Linear(latent_dim, output_dim)
-
         self.fc_cell = nn.Linear(input_dim, hidden_dim)
-        self.fc_cell_mu = nn.Linear(hidden_dim, latent_dim)
-        self.fc_cell_var = nn.Linear(hidden_dim, latent_dim)
-        self.fc_cell_out = nn.Linear(latent_dim, output_dim)
+
+        self.fc_mu = nn.Linear(2 * hidden_dim, latent_dim)
+        self.fc_var = nn.Linear(2 * hidden_dim, latent_dim)
+
+        # TODO: nn.Linear or Linear
+        self.fc_out = nn.Linear(latent_dim, output_dim)
 
     def forward(self, final_hiddens: torch.Tensor, final_cells: torch.Tensor):
         """
@@ -528,45 +564,38 @@ class Controller(nn.Module):
         Args:
             final_hiddens: tensor of size ``E x B x H_in``
             final_cells: tensor of size ``E x B x H_in``
-
-        Returns:
-            hiddens: tensor of size ``B x H_out``
-            cells: tensor of size ``B x H_out``
         """
         # E x B x H_in -> B x E x H_in -> B x (E * H_in)
         final_hiddens = final_hiddens.transpose(0, 1).flatten(start_dim=1)
         final_cells = final_cells.transpose(0, 1).flatten(start_dim=1)
 
         # B x (E * H_in) -> B x hidden_dim
-        hiddens = self.fc_hidden(final_hiddens)
-        cells = self.fc_cell(final_cells)
+        final_hiddens = self.fc_hidden(final_hiddens)
+        final_cells = self.fc_cell(final_cells)
 
-        # B x hidden_dim -> B x latent_dim
-        hiddens_mu = self.fc_hidden_mu(hiddens)
-        hiddens_var = self.fc_hidden_var(hiddens)
+        # B x hidden_dim -> B x (2 * hidden_dim)
+        h_c = torch.cat([final_hiddens, final_cells], dim=1)
 
-        cells_mu = self.fc_cell_mu(cells)
-        cells_var = self.fc_cell_var(cells)
+        # B x (2 * hidden_dim) -> B x latent_dim
+        mu = self.fc_mu(h_c)
+        log_var = self.fc_var(h_c)
+        z = self.reparameterize(mu, log_var)
 
-        hiddens_param = self.reparameterize(hiddens_mu, hiddens_var)
-        cells_param = self.reparameterize(cells_mu, cells_var)
+        # B x latent_dim -> B x output_dim
+        recons = self.fc_out(z)
 
-        # B x latent_dim -> B x H_out
-        recons_hiddens = self.fc_hidden_out(hiddens_param)
-        recons_cells = self.fc_cell_out(cells_param)
+        return {"mu": mu, "log_var": log_var, "z": z, "recons": recons}
 
-        return {"recons_hiddens": recons_hiddens, "recons_cells": recons_cells}
-
-    def reparameterize(self, mu: torch.Tensor, log_var: torch.Tensor):
-        """Reparameterization trick to sample from N(mu, var) from N(0,1).
-
-        Args:
-            mu: Mean of the latent Gaussian
-            log_var: Standard deviation of the latent Gaussian
+    def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
-        std = torch.exp(0.5 * log_var)
-        eps = torch.randn_like(std)
+        Reparameterization trick to sample from N(mu, var) from N(0,1).
 
+        :param mu: (Tensor) Mean of the latent Gaussian [B x D]
+        :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
+        :return: (Tensor) [B x D]
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
         return eps * std + mu
 
 
