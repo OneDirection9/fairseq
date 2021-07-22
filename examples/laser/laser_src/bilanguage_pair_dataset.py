@@ -64,7 +64,7 @@ def dual_language_collate(
             move_eos_to_beginning=True,
             pad_to_length=pad_to_length[key] if pad_to_length is not None else None,
         )
-        prev_output_tokens.index_select(0, sort_order)
+        prev_output_tokens = prev_output_tokens.index_select(0, sort_order)
 
         return {
             "id": id,
@@ -73,6 +73,7 @@ def dual_language_collate(
             "net_input": {
                 "src_tokens": src_tokens,
                 "src_lengths": src_lengths,
+                "prev_output_tokens": prev_output_tokens,
             },
             "target": target,
         }
