@@ -65,18 +65,16 @@ class LaserTask(LegacyFairseqTask):
             # this might have already been defined. Once we transition this to hydra it should be fine to add it here.
             pass
 
-    def __init__(self, args, config, src_dictionary, tgt_dictionary, num_tasks):
+    def __init__(self, args, config, src_dictionary, tgt_dictionary):
         super().__init__(args)
         self.config = config
         self.src_dictionary = src_dictionary
         self.tgt_dictionary = tgt_dictionary
-        self.num_tasks = num_tasks
 
     @classmethod
     def setup_task(cls, args, **kwargs):
         with open(args.configfile, "r") as f:
             config = json.load(f)
-        num_tasks = max(dataset["id"] for dataset in config["train"]) + 1
 
         args.left_pad_source = options.eval_bool(args.left_pad_source)
         args.left_pad_target = options.eval_bool(args.left_pad_target)
@@ -91,7 +89,7 @@ class LaserTask(LegacyFairseqTask):
             "| tgt Dictionary {} : {} types".format(config["tgt_vocab"], len(tgt_dictionary))
         )
 
-        return cls(args, config, src_dictionary, tgt_dictionary, num_tasks)
+        return cls(args, config, src_dictionary, tgt_dictionary)
 
     # Experimental overriding for backtranslation
     def build_model(self, args):
