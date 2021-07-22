@@ -31,15 +31,12 @@ class LSTMModel(FairseqEncoderDecoderModel):
         prev_output_tokens=None,
         tgt_tokens=None,
         tgt_lengths=None,
-        target_language_id=None,
         dataset_name="",
     ):
-        assert target_language_id is not None
-
         src_encoder_out = self.encoder(src_tokens, src_lengths, dataset_name)
         final_hiddens, final_cells = src_encoder_out["encoder_out"][1:]
         controller_out = self.controller(final_hiddens, final_cells)
-        decoder_out = self.decoder(prev_output_tokens, src_encoder_out, lang_id=target_language_id)
+        decoder_out = self.decoder(prev_output_tokens, src_encoder_out)
         return controller_out, decoder_out
 
     @staticmethod
@@ -170,8 +167,6 @@ class LSTMModel(FairseqEncoderDecoderModel):
                 args.decoder_embed_path, task.target_dictionary, args.decoder_embed_dim
             )
 
-        num_langs = task.num_tasks if hasattr(task, "num_tasks") else 0
-
         encoder = LSTMEncoder(
             dictionary=task.source_dictionary,
             embed_dim=args.encoder_embed_dim,
@@ -195,8 +190,6 @@ class LSTMModel(FairseqEncoderDecoderModel):
             encoder_embed_dim=args.encoder_embed_dim,
             encoder_output_units=encoder.output_units,
             pretrained_embed=pretrained_decoder_embed,
-            num_langs=num_langs,
-            lang_embed_dim=args.decoder_lang_embed_dim,
         )
         controller = Controller(
             input_dim=encoder.output_units,
@@ -356,8 +349,6 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         encoder_embed_dim=512,
         encoder_output_units=512,
         pretrained_embed=None,
-        num_langs=1,
-        lang_embed_dim=0,
     ):
         super().__init__(dictionary)
         self.dropout_in = dropout_in
@@ -374,9 +365,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         self.layers = nn.ModuleList(
             [
                 LSTMCell(
-                    input_size=encoder_output_units + embed_dim + lang_embed_dim
-                    if layer == 0
-                    else hidden_size,
+                    input_size=encoder_output_units + embed_dim if layer == 0 else hidden_size,
                     hidden_size=hidden_size,
                 )
                 for layer in range(num_layers)
@@ -388,19 +377,12 @@ class LSTMDecoder(FairseqIncrementalDecoder):
 
         self.zero_init = zero_init
 
-        if lang_embed_dim == 0:
-            self.embed_lang = None
-        else:
-            self.embed_lang = nn.Embedding(num_langs, lang_embed_dim)
-            nn.init.uniform_(self.embed_lang.weight, -0.1, 0.1)
-
     def forward(
         self,
         prev_output_tokens,
         encoder_out_dict,
         incremental_state=None,
         hc_init=None,
-        lang_id=0,
     ):
         sentemb = encoder_out_dict["sentemb"]
         encoder_out = encoder_out_dict["encoder_out"]
@@ -416,12 +398,6 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         # embed tokens
         x = self.embed_tokens(prev_output_tokens)
         x = F.dropout(x, p=self.dropout_in, training=self.training)
-
-        # embed language identifier
-        if self.embed_lang is not None:
-            lang_ids = prev_output_tokens.data.new_full((bsz,), lang_id)
-            langemb = self.embed_lang(lang_ids)
-            # TODO Should we dropout here???
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
@@ -457,10 +433,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         attn_scores = x.data.new(srclen, seqlen, bsz).zero_()
         outs = []
         for j in range(seqlen):
-            if self.embed_lang is None:
-                input = torch.cat((x[j, :, :], sentemb), dim=1)
-            else:
-                input = torch.cat((x[j, :, :], sentemb, langemb), dim=1)
+            input = torch.cat((x[j, :, :], sentemb), dim=1)
 
             for i, rnn in enumerate(self.layers):
                 # recurrent cell
@@ -646,7 +619,6 @@ def base_architecture(args):
     args.decoder_dropout_in = getattr(args, "decoder_dropout_in", args.dropout)
     args.decoder_dropout_out = getattr(args, "decoder_dropout_out", args.dropout)
     args.decoder_zero_init = getattr(args, "decoder_zero_init", "0")
-    args.decoder_lang_embed_dim = getattr(args, "decoder_lang_embed_dim", 0)
     args.fixed_embeddings = getattr(args, "fixed_embeddings", False)
 
     args.controller_latent_dim = getattr(args, "controller_latent_dim", 1024)
