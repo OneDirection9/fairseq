@@ -22,22 +22,22 @@ class LSTMModel(FairseqEncoderDecoderModel):
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
 
-    def forward(self, source_language_pair_input, target_language_pair_input):
+    def forward(self, source_lang_input, target_lang_input):
         source_encoder_out = self.encoder(
-            source_language_pair_input["src_tokens"],
-            source_language_pair_input["src_lengths"],
-            source_language_pair_input["dataset_name"],
+            source_lang_input["src_tokens"],
+            source_lang_input["src_lengths"],
+            source_lang_input["dataset_name"],
         )
         target_encoder_out = self.encoder(
-            target_language_pair_input["src_tokens"],
-            target_language_pair_input["src_lengths"],
-            target_language_pair_input["dataset_name"],
+            target_lang_input["src_tokens"],
+            target_lang_input["src_lengths"],
+            target_lang_input["dataset_name"],
         )
 
         decoder_out = self.decoder(
-            source_language_pair_input["prev_output_tokens"],
+            source_lang_input["prev_output_tokens"],
             source_encoder_out,
-            target_language_pair_input["prev_output_tokens"],
+            target_lang_input["prev_output_tokens"],
             target_encoder_out,
         )
 
