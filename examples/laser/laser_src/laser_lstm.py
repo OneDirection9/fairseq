@@ -401,6 +401,8 @@ class MultiDecoder(FairseqIncrementalDecoder):
             pretrained_embed=pretrained_embed,
         )
 
+        # self.discriminator = Discriminator(2 * num_layers * hidden_size)
+
     def forward(
         self,
         source_prev_output_tokens,
@@ -408,10 +410,7 @@ class MultiDecoder(FairseqIncrementalDecoder):
         target_prev_output_tokens,
         target_encoder_out,
     ):
-        source_decoder_out = self.source_decoder(
-            source_prev_output_tokens,
-            source_encoder_out,
-        )
+        source_decoder_out = self.source_decoder(source_prev_output_tokens, source_encoder_out)
         target_decoder_out = self.target_decoder(target_prev_output_tokens, target_encoder_out)
         return {
             "source_decoder_out": source_decoder_out,
@@ -651,6 +650,23 @@ class Controller(nn.Module):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return eps * std + mu
+
+
+class Discriminator(nn.Module):
+    def __init__(self, input_dim):
+        super(Discriminator, self).__init__()
+
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, 512),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(256, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, z):
+        return self.model(z)
 
 
 def Embedding(num_embeddings, embedding_dim, padding_idx):
