@@ -47,16 +47,7 @@ def dual_language_collate(
         id = id.index_select(0, sort_order)
         src_tokens = src_tokens.index_select(0, sort_order)
 
-        target = merge(
-            key,
-            left_pad=left_pad_target,
-            pad_to_length=pad_to_length[key] if pad_to_length is not None else None,
-        )
-        target = target.index_select(0, sort_order)
-        tgt_lengths = torch.LongTensor(
-            [s[key].ne(pad_idx).long().sum() for s in samples]
-        ).index_select(0, sort_order)
-        ntokens = tgt_lengths.sum().item()
+        ntokens = src_lengths.sum().item()
 
         prev_output_tokens = merge(
             key,
@@ -75,13 +66,12 @@ def dual_language_collate(
                 "src_lengths": src_lengths,
                 "prev_output_tokens": prev_output_tokens,
             },
-            "target": target,
         }
 
-    src_lang_pair = collate_language_pair("source")
-    tgt_lang_pair = collate_language_pair("target")
+    src_lang_batch = collate_language_pair("source")
+    tgt_lang_batch = collate_language_pair("target")
 
-    batch = {"source_lang_pair": src_lang_pair, "target_lang_pair": tgt_lang_pair}
+    batch = {"source_lang_batch": src_lang_batch, "target_lang_batch": tgt_lang_batch}
     return batch
 
 
