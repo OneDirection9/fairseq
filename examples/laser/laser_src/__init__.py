@@ -6,4 +6,4 @@
 from .laser_lstm import *  # noqa
 from .laser_task import *  # noqa
 from .laser_transformer import *  # noqa
-from .vae_gan_loss import *  # noqa
+from .vae_kl_loss import *  # noqa

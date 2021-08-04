@@ -11,18 +11,19 @@ from fairseq.dataclass import FairseqDataclass
 
 
 @dataclass
-class CrossEntropyCriterionConfig(FairseqDataclass):
+class VaeKLCriterionConfig(FairseqDataclass):
     sentence_avg: bool = II("optimization.sentence_avg")
 
 
-@register_criterion("vae_gan", dataclass=CrossEntropyCriterionConfig)
-class VawGanCriterion(FairseqCriterion):
+@register_criterion("vae_kl", dataclass=VaeKLCriterionConfig)
+class VaeKLCriterion(FairseqCriterion):
     def __init__(self, task, sentence_avg):
         super().__init__(task)
         self.sentence_avg = sentence_avg
         self.training = True
         self.num_iter = 0
 
+        # TODO: make beta-tcvae hyper-parameters configurable
         self.alpha = 1.0
         self.beta = 6.0
         self.gamma = 1.0
@@ -35,15 +36,12 @@ class VawGanCriterion(FairseqCriterion):
             sample: see BilanguagePairDataset, MultitaskDatasetWrapper
             reduce:
         """
+        bsz = sample["source_lang_batch"]["nsentences"]
+        ntokens = sample["source_lang_batch"]["ntokens"] + sample["target_lang_batch"]["ntokens"]
+        sample_size = bsz + bsz if self.sentence_avg else ntokens
+
         net_out = model(
             sample["source_lang_batch"]["net_input"], sample["target_lang_batch"]["net_input"]
-        )
-
-        source_lang_batch = sample["source_lang_batch"]
-        sample_size = (
-            source_lang_batch["net_input"]["src_tokens"].size(0)
-            if self.sentence_avg
-            else source_lang_batch["ntokens"]
         )
 
         source_losses = self.compute_single_lang_losses(
@@ -58,11 +56,24 @@ class VawGanCriterion(FairseqCriterion):
             net_out["target_decoder_out"],
             reduce=reduce,
         )
+        vae_loss = source_losses["loss"] + target_losses["loss"]
+
+        kl_loss = self.compute_kl_loss(
+            net_out["source_encoder_out"]["controller_out"]["mu"],
+            net_out["source_encoder_out"]["controller_out"]["log_var"],
+            net_out["target_encoder_out"]["controller_out"]["mu"],
+            net_out["target_encoder_out"]["controller_out"]["log_var"],
+        )
+        kl_loss = kl_loss.sum() / bsz
+
+        loss = vae_loss + kl_loss
         logging_output = {
-            "source_losses": source_losses,
-            "target_losses": target_losses,
+            "loss": loss.data,
+            "vae_loss": vae_loss.data,
+            "kl_loss": kl_loss.data,
+            "sample_size": sample_size,
+            "ntokens": ntokens,
         }
-        loss = source_losses["loss"] + target_losses["loss"]
 
         return loss, sample_size, logging_output
 
@@ -75,8 +86,7 @@ class VawGanCriterion(FairseqCriterion):
             decoder_out: see LSTMDecoder
             reduce:
         """
-        dataset_name = sample["net_input"]["dataset_name"]
-        dataset_len = len(self.task.datasets["train"][dataset_name])
+        dataset_len = sum(len(ds) for ds in self.task.datasets["train"].values())
 
         z = encoder_out["controller_out"]["z"]
         mu = encoder_out["controller_out"]["mu"]
@@ -163,18 +173,41 @@ class VawGanCriterion(FairseqCriterion):
         log_density = norm - 0.5 * ((x - mu) ** 2 * torch.exp(-logvar))
         return log_density
 
+    def compute_kl_loss(self, source_mu, source_log_var, target_mu, target_log_var):
+        # \log \frac{\sigma_{2}}{\sigma_{1}} +
+        # \frac{\sigma_{1}^{2}+\left(\mu_{1}-\mu_{2}\right)^{2}}{2 \sigma_{2}^{2}} -
+        # \frac{1}{2}
+
+        # \log \frac{\sigma_{2}}{\sigma_{1}}
+        kl_1 = target_log_var - source_log_var
+        # \frac{\sigma_{1}^{2}+\left(\mu_{1}-\mu_{2}\right)^{2}}{2 \sigma_{2}^{2}}
+        kl_2 = (torch.exp(source_log_var) ** 2 + (source_mu - target_mu) ** 2) / (
+            2 * torch.exp(target_log_var) ** 2
+        )
+
+        return kl_1 + kl_2 - 0.5
+
     @staticmethod
     def reduce_metrics(logging_outputs) -> None:
         """Aggregate logging outputs from data parallel training."""
         loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
+        vae_loss_sum = sum(log.get("vae_loss", 0) for log in logging_outputs)
+        kl_loss_sum = sum(log.get("kl_loss", 0) for log in logging_outputs)
         ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
         sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
 
         # we divide by log(2) to convert the loss from base e to base 2
         metrics.log_scalar("loss", loss_sum / sample_size / math.log(2), sample_size, round=3)
+        metrics.log_scalar(
+            "vae_loss", vae_loss_sum / sample_size / math.log(2), sample_size, round=3
+        )
+        metrics.log_scalar("kl_loss", kl_loss_sum / sample_size / math.log(2), sample_size, round=3)
+
         if sample_size != ntokens:
-            metrics.log_scalar("nll_loss", loss_sum / ntokens / math.log(2), ntokens, round=3)
-            metrics.log_derived("ppl", lambda meters: utils.get_perplexity(meters["nll_loss"].avg))
+            metrics.log_scalar("vae_kl_loss", loss_sum / ntokens / math.log(2), ntokens, round=3)
+            metrics.log_derived(
+                "ppl", lambda meters: utils.get_perplexity(meters["vae_kl_loss"].avg)
+            )
         else:
             metrics.log_derived("ppl", lambda meters: utils.get_perplexity(meters["loss"].avg))
 
