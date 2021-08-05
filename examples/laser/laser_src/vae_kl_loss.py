@@ -73,6 +73,7 @@ class VaeKLCriterion(FairseqCriterion):
             "kl_loss": kl_loss.data,
             "sample_size": sample_size,
             "ntokens": ntokens,
+            "nsentences": bsz * 2,
         }
 
         return loss, sample_size, logging_output
