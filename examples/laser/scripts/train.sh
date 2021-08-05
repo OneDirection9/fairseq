@@ -34,4 +34,4 @@ fairseq-train \
   --decoder-embed-dim 320 \
   --warmup-init-lr 0.001 \
   --disable-validation \
-  --criterion vae_gan
+  --criterion vae_kl
