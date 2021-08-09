@@ -14,7 +14,6 @@ fairseq-train \
   --task laser --arch laser_lstm \
   --save-dir "${save_dir}" \
   --tensorboard-logdir "${save_dir}/log" \
-  --fp16 \
   --optimizer adam \
   --lr 0.001 \
   --lr-scheduler inverse_sqrt \
@@ -34,4 +33,8 @@ fairseq-train \
   --decoder-embed-dim 320 \
   --warmup-init-lr 0.001 \
   --disable-validation \
-  --criterion vae_kl
+  --criterion vae_kl \
+  --alpha 1.0 \
+  --beta 1.0 \
+  --gamma 1.0 \
+  --anneal-steps 1000
