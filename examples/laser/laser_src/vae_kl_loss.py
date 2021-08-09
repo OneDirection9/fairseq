@@ -71,7 +71,7 @@ class VaeKLCriterion(FairseqCriterion):
             net_out["target_decoder_out"],
             reduce=reduce,
         )
-        vae_loss = source_losses["loss"] + target_losses["loss"]
+        vae_loss = (source_losses["loss"] + target_losses["loss"]) / 2
 
         kl_loss = self.compute_kl_loss(
             net_out["source_encoder_out"]["controller_out"]["mu"],
@@ -212,20 +212,9 @@ class VaeKLCriterion(FairseqCriterion):
         ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
         sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
 
-        # we divide by log(2) to convert the loss from base e to base 2
-        metrics.log_scalar("loss", loss_sum / sample_size / math.log(2), sample_size, round=3)
-        metrics.log_scalar(
-            "vae_loss", vae_loss_sum / sample_size / math.log(2), sample_size, round=3
-        )
-        metrics.log_scalar("kl_loss", kl_loss_sum / sample_size / math.log(2), sample_size, round=3)
-
-        if sample_size != ntokens:
-            metrics.log_scalar("vae_kl_loss", loss_sum / ntokens / math.log(2), ntokens, round=3)
-            metrics.log_derived(
-                "ppl", lambda meters: utils.get_perplexity(meters["vae_kl_loss"].avg)
-            )
-        else:
-            metrics.log_derived("ppl", lambda meters: utils.get_perplexity(meters["loss"].avg))
+        metrics.log_scalar("loss", loss_sum, round=3)
+        metrics.log_scalar("vae_loss", vae_loss_sum, round=3)
+        metrics.log_scalar("kl_loss", kl_loss_sum, round=3)
 
     @staticmethod
     def logging_outputs_can_be_summed() -> bool:
