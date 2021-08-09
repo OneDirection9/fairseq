@@ -1,5 +1,5 @@
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 import torch.nn.functional as F
@@ -13,21 +13,36 @@ from fairseq.dataclass import FairseqDataclass
 @dataclass
 class VaeKLCriterionConfig(FairseqDataclass):
     sentence_avg: bool = II("optimization.sentence_avg")
+    alpha: float = field(
+        default=1.0,
+        metadata={"help": "hyper-parameters for Beta-tcvae"},
+    )
+    beta: float = field(
+        default=1.0,
+        metadata={"help": "hyper-parameters for Beta-tcvae"},
+    )
+    gamma: float = field(
+        default=1.0,
+        metadata={"help": "hyper-parameters for Beta-tcvae"},
+    )
+    anneal_steps: int = field(
+        default=1000,
+        metadata={"help": "hyper-parameters for Beta-tcvae"},
+    )
 
 
 @register_criterion("vae_kl", dataclass=VaeKLCriterionConfig)
 class VaeKLCriterion(FairseqCriterion):
-    def __init__(self, task, sentence_avg):
+    def __init__(self, task, sentence_avg, alpha, beta, gamma, anneal_steps):
         super().__init__(task)
         self.sentence_avg = sentence_avg
         self.training = True
         self.num_iter = 0
 
-        # TODO: make beta-tcvae hyper-parameters configurable
-        self.alpha = 1.0
-        self.beta = 6.0
-        self.gamma = 1.0
-        self.anneal_steps = 10000
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.anneal_steps = anneal_steps
 
     def forward(self, model, sample, reduce=True):
         """
