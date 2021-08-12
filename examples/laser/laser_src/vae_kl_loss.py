@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from omegaconf import II
 
-from fairseq import metrics, utils
+from fairseq import metrics
 from fairseq.criterions import FairseqCriterion, register_criterion
 from fairseq.dataclass import FairseqDataclass
 
@@ -82,6 +82,7 @@ class VaeKLCriterion(FairseqCriterion):
         kl_loss = kl_loss.sum() / bsz
 
         loss = vae_loss + kl_loss
+
         logging_output = {
             "loss": loss.data,
             "vae_loss": vae_loss.data,
@@ -89,6 +90,12 @@ class VaeKLCriterion(FairseqCriterion):
             "sample_size": sample_size,
             "ntokens": ntokens,
             "nsentences": bsz * 2,
+            "source_KLD": source_losses["KLD"].data,
+            "source_TC_loss": source_losses["TC_loss"].data,
+            "source_MI_loss": source_losses["MI_loss"].data,
+            "target_KLD": target_losses["KLD"].data,
+            "target_TC_loss": target_losses["TC_loss"].data,
+            "target_MI_loss": target_losses["MI_loss"].data,
         }
 
         return loss, sample_size, logging_output
@@ -209,12 +216,29 @@ class VaeKLCriterion(FairseqCriterion):
         loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
         vae_loss_sum = sum(log.get("vae_loss", 0) for log in logging_outputs)
         kl_loss_sum = sum(log.get("kl_loss", 0) for log in logging_outputs)
-        ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
-        sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
 
-        metrics.log_scalar("loss", loss_sum, round=3)
-        metrics.log_scalar("vae_loss", vae_loss_sum, round=3)
-        metrics.log_scalar("kl_loss", kl_loss_sum, round=3)
+        source_KLD_sum = sum(log.get("source_KLD", 0) for log in logging_outputs)
+        source_TC_loss_sum = sum(log.get("source_TC_loss", 0) for log in logging_outputs)
+        source_MI_loss_sum = sum(log.get("source_MI_loss", 0) for log in logging_outputs)
+
+        target_KLD_sum = sum(log.get("target_KLD", 0) for log in logging_outputs)
+        target_TC_loss_sum = sum(log.get("target_TC_loss", 0) for log in logging_outputs)
+        target_MI_loss_sum = sum(log.get("target_MI_loss", 0) for log in logging_outputs)
+
+        # ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
+        # sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
+
+        worker = len(logging_outputs)
+        metrics.log_scalar("loss", loss_sum / worker, round=3)
+        metrics.log_scalar("vae_loss", vae_loss_sum / worker, round=3)
+        metrics.log_scalar("kl_loss", kl_loss_sum / worker, round=3)
+        metrics.log_scalar("source_KLD", source_KLD_sum / worker, round=3)
+        metrics.log_scalar("source_TC_loss", source_TC_loss_sum / worker, round=3)
+        metrics.log_scalar("source_MI_loss", source_MI_loss_sum / worker, round=3)
+
+        metrics.log_scalar("target_KLD", target_KLD_sum / worker, round=3)
+        metrics.log_scalar("target_TC_loss", target_TC_loss_sum / worker, round=3)
+        metrics.log_scalar("target_MI_loss", target_MI_loss_sum / worker, round=3)
 
     @staticmethod
     def logging_outputs_can_be_summed() -> bool:
