@@ -150,6 +150,13 @@ class LSTMModel(FairseqEncoderDecoderModel):
             help="dropout probability for decoder output",
         )
 
+        parser.add_argument(
+            "--controller-hidden-dim", type=int, metavar="N", help="controller hidden dim"
+        )
+        parser.add_argument(
+            "--controller-latent-dim", type=int, metavar="N", help="controller latent dim"
+        )
+
     @classmethod
     def build_model(cls, args, task):
         """Build a new model instance."""
