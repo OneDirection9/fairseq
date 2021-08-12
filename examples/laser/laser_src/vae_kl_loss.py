@@ -219,10 +219,12 @@ class VaeKLCriterion(FairseqCriterion):
         vae_loss_sum = sum(log.get("vae_loss", 0) for log in logging_outputs)
         kl_loss_sum = sum(log.get("kl_loss", 0) for log in logging_outputs)
 
+        source_recons_sum = sum(log.get("source_recons", 0) for log in logging_outputs)
         source_KLD_sum = sum(log.get("source_KLD", 0) for log in logging_outputs)
         source_TC_loss_sum = sum(log.get("source_TC_loss", 0) for log in logging_outputs)
         source_MI_loss_sum = sum(log.get("source_MI_loss", 0) for log in logging_outputs)
 
+        target_recons_sum = sum(log.get("target_recons", 0) for log in logging_outputs)
         target_KLD_sum = sum(log.get("target_KLD", 0) for log in logging_outputs)
         target_TC_loss_sum = sum(log.get("target_TC_loss", 0) for log in logging_outputs)
         target_MI_loss_sum = sum(log.get("target_MI_loss", 0) for log in logging_outputs)
@@ -234,10 +236,13 @@ class VaeKLCriterion(FairseqCriterion):
         metrics.log_scalar("loss", loss_sum / worker, round=3)
         metrics.log_scalar("vae_loss", vae_loss_sum / worker, round=3)
         metrics.log_scalar("kl_loss", kl_loss_sum / worker, round=3)
+
+        metrics.log_scalar("source_recons", source_recons_sum / worker, round=3)
         metrics.log_scalar("source_KLD", source_KLD_sum / worker, round=3)
         metrics.log_scalar("source_TC_loss", source_TC_loss_sum / worker, round=3)
         metrics.log_scalar("source_MI_loss", source_MI_loss_sum / worker, round=3)
 
+        metrics.log_scalar("target_recons", target_recons_sum / worker, round=3)
         metrics.log_scalar("target_KLD", target_KLD_sum / worker, round=3)
         metrics.log_scalar("target_TC_loss", target_TC_loss_sum / worker, round=3)
         metrics.log_scalar("target_MI_loss", target_MI_loss_sum / worker, round=3)
