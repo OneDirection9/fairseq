@@ -90,9 +90,11 @@ class VaeKLCriterion(FairseqCriterion):
             "sample_size": sample_size,
             "ntokens": ntokens,
             "nsentences": bsz * 2,
+            "source_recons": source_losses["reconstruction"].data / bsz,
             "source_KLD": source_losses["KLD"].data,
             "source_TC_loss": source_losses["TC_loss"].data,
             "source_MI_loss": source_losses["MI_loss"].data,
+            "target_recons": target_losses["reconstruction"].data / bsz,
             "target_KLD": target_losses["KLD"].data,
             "target_TC_loss": target_losses["TC_loss"].data,
             "target_MI_loss": target_losses["MI_loss"].data,
@@ -109,7 +111,6 @@ class VaeKLCriterion(FairseqCriterion):
             decoder_out: see LSTMDecoder
             reduce:
         """
-        dataset_len = sum(len(ds) for ds in self.task.datasets["train"].values())
         dataset_len = self.task.dataset_size
 
         z = encoder_out["controller_out"]["z"]
