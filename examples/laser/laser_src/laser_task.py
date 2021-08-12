@@ -71,6 +71,8 @@ class LaserTask(LegacyFairseqTask):
         self.src_dictionary = src_dictionary
         self.tgt_dictionary = tgt_dictionary
 
+        self.dataset_size = 0
+
     @classmethod
     def setup_task(cls, args, **kwargs):
         with open(args.configfile, "r") as f:
@@ -279,6 +281,8 @@ class LaserTask(LegacyFairseqTask):
                 logger.info(f"\t filter_by_size {key}")
                 indices[key], ignored = dt.filter_indices_by_size(indices[key], max_positions)
 
+        self.dataset_size = 0
+
         for key, dt in dataset.items():
             logger.info(f"\t batch_by_size {key}")
             sampler = data_utils.batch_by_size(
@@ -290,7 +294,10 @@ class LaserTask(LegacyFairseqTask):
             )
             ori_size = len(sampler)
             sampler = [b for b in sampler if len(b) > 1]
-            logger.info(f"\t * filter out {ori_size - len(sampler)} batches containing only one sample")
+            self.dataset_size += sum(len(b) for b in sampler)
+            logger.info(
+                f"\t * filter out {ori_size - len(sampler)} batches containing only one sample"
+            )
             batch_sampler[key] = sampler
 
         epoch_iter = MultidatasetEpochBatchIterator(

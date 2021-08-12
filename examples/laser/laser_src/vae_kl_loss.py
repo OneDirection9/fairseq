@@ -110,6 +110,7 @@ class VaeKLCriterion(FairseqCriterion):
             reduce:
         """
         dataset_len = sum(len(ds) for ds in self.task.datasets["train"].values())
+        dataset_len = self.task.dataset_size
 
         z = encoder_out["controller_out"]["z"]
         mu = encoder_out["controller_out"]["mu"]
