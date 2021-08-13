@@ -113,9 +113,10 @@ class MultitaskDatasetWrapper(BaseWrapperDataset):
 
     def collater(self, *args, **kwargs):
         ans = self.dataset.collater(*args, **kwargs)
+        if "source_lang_batch" in ans and "target_lang_batch" in ans:
+            ans["source_lang_batch"]["net_input"]["dataset_name"] = self.name
+            ans["target_lang_batch"]["net_input"]["dataset_name"] = self.name
 
-        ans["source_lang_batch"]["net_input"]["dataset_name"] = self.name
-        ans["target_lang_batch"]["net_input"]["dataset_name"] = self.name
         return ans
 
     def num_tokens(self, *args, **kwargs):

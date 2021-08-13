@@ -116,7 +116,7 @@ class VaeKLCriterion(FairseqCriterion):
         z = encoder_out["controller_out"]["z"]
         mu = encoder_out["controller_out"]["mu"]
         log_var = encoder_out["controller_out"]["log_var"]
-        input = sample["net_input"]["src_tokens"]
+        tgt_tokens = sample["tgt_tokens"]
 
         weight = 1  # kwargs['M_N']  # Account for the minibatch samples from the dataset
 
@@ -124,10 +124,10 @@ class VaeKLCriterion(FairseqCriterion):
         log_probs = F.log_softmax(decoder_out[0], dim=-1, dtype=torch.float32)
         log_probs = log_probs.view(-1, log_probs.size(-1))
         # B x T -> B * T,
-        input = input.view(-1)
+        tgt_tokens = tgt_tokens.view(-1)
         recons_loss = F.nll_loss(
             log_probs,
-            input,
+            tgt_tokens,
             ignore_index=self.padding_idx,
             reduction="sum" if reduce else "none",
         )
@@ -150,7 +150,7 @@ class VaeKLCriterion(FairseqCriterion):
         dataset_size = (1 / M_N) * batch_size  # dataset size
         strat_weight = (dataset_size - batch_size + 1) / (dataset_size * (batch_size - 1))
         importance_weights = (
-            torch.Tensor(batch_size, batch_size).fill_(1 / (batch_size - 1)).to(input.device)
+            torch.Tensor(batch_size, batch_size).fill_(1 / (batch_size - 1)).to(tgt_tokens.device)
         )
         importance_weights.view(-1)[::batch_size] = 1 / dataset_size
         importance_weights.view(-1)[1::batch_size] = strat_weight
