@@ -49,6 +49,13 @@ def dual_language_collate(
 
         ntokens = src_lengths.sum().item()
 
+        tgt_tokens = merge(
+            key,
+            left_pad=left_pad_target,
+            pad_to_length=pad_to_length[key] if pad_to_length is not None else None,
+        )
+        tgt_tokens = tgt_tokens.index_select(0, sort_order)
+
         prev_output_tokens = merge(
             key,
             left_pad=left_pad_target,
@@ -66,6 +73,7 @@ def dual_language_collate(
                 "src_lengths": src_lengths,
                 "prev_output_tokens": prev_output_tokens,
             },
+            "tgt_tokens": tgt_tokens,
         }
 
     src_lang_batch = collate_language_pair("source")
