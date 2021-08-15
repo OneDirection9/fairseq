@@ -204,10 +204,10 @@ class VaeKLCriterion(FairseqCriterion):
         # \frac{1}{2}
 
         # \log \frac{\sigma_{2}}{\sigma_{1}}
-        kl_1 = target_log_var - source_log_var
+        kl_1 = 0.5 * (target_log_var - source_log_var)
         # \frac{\sigma_{1}^{2}+\left(\mu_{1}-\mu_{2}\right)^{2}}{2 \sigma_{2}^{2}}
-        kl_2 = (torch.exp(source_log_var) ** 2 + (source_mu - target_mu) ** 2) / (
-            2 * torch.exp(target_log_var) ** 2
+        kl_2 = (torch.exp(source_log_var) + (source_mu - target_mu) ** 2) / (
+            2 * torch.exp(target_log_var)
         )
 
         return kl_1 + kl_2 - 0.5
