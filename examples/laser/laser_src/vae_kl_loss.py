@@ -9,6 +9,8 @@ from fairseq import metrics
 from fairseq.criterions import FairseqCriterion, register_criterion
 from fairseq.dataclass import FairseqDataclass
 
+eps = 1e-7
+
 
 @dataclass
 class VaeKLCriterionConfig(FairseqDataclass):
@@ -207,7 +209,7 @@ class VaeKLCriterion(FairseqCriterion):
         kl_1 = 0.5 * (target_log_var - source_log_var)
         # \frac{\sigma_{1}^{2}+\left(\mu_{1}-\mu_{2}\right)^{2}}{2 \sigma_{2}^{2}}
         kl_2 = (torch.exp(source_log_var) + (source_mu - target_mu) ** 2) / (
-            2 * torch.exp(target_log_var)
+            2 * torch.exp(target_log_var) + eps
         )
 
         return kl_1 + kl_2 - 0.5
