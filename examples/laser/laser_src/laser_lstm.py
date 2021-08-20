@@ -22,6 +22,8 @@ class LSTMModel(FairseqEncoderDecoderModel):
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
 
+        self.update_num = 0
+
     def forward(self, source_lang_input, target_lang_input):
         source_encoder_out = self.encoder(
             source_lang_input["src_tokens"],
@@ -212,6 +214,10 @@ class LSTMModel(FairseqEncoderDecoderModel):
             pretrained_embed=pretrained_decoder_embed,
         )
         return cls(encoder, decoder)
+
+    def set_num_updates(self, num_updates):
+        super().set_num_updates(num_updates)
+        self.update_num = num_updates
 
 
 class LSTMEncoder(FairseqEncoder):
