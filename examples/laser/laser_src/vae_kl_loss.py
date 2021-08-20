@@ -73,7 +73,7 @@ class VaeKLCriterion(FairseqCriterion):
             net_out["target_decoder_out"],
             reduce=reduce,
         )
-        vae_loss = (source_losses["loss"] + target_losses["loss"]) / 2
+        vae_loss = source_losses["loss"] + target_losses["loss"]
 
         kl_loss = self.compute_kl_loss(
             net_out["source_encoder_out"]["controller_out"]["mu"],
@@ -81,7 +81,7 @@ class VaeKLCriterion(FairseqCriterion):
             net_out["target_encoder_out"]["controller_out"]["mu"],
             net_out["target_encoder_out"]["controller_out"]["log_var"],
         )
-        kl_loss = kl_loss.sum() / bsz
+        kl_loss = kl_loss.sum()
 
         loss = vae_loss + kl_loss
 
@@ -89,7 +89,7 @@ class VaeKLCriterion(FairseqCriterion):
             "loss": loss.data,
             "vae_loss": vae_loss.data,
             "kl_loss": kl_loss.data,
-            "sample_size": sample_size,
+            "sample_size": bsz,
             "ntokens": ntokens,
             "nsentences": bsz * 2,
             "source_recons": source_losses["reconstruction"].data / bsz,
@@ -102,7 +102,7 @@ class VaeKLCriterion(FairseqCriterion):
             "target_MI_loss": target_losses["MI_loss"].data,
         }
 
-        return loss, sample_size, logging_output
+        return loss, bsz, logging_output
 
     def compute_single_lang_losses(self, sample, encoder_out, decoder_out, reduce=True):
         """
@@ -164,9 +164,9 @@ class VaeKLCriterion(FairseqCriterion):
         log_q_z = torch.logsumexp(mat_log_q_z.sum(2), dim=1, keepdim=False)
         log_prod_q_z = torch.logsumexp(mat_log_q_z, dim=1, keepdim=False).sum(1)
 
-        mi_loss = (log_q_zx - log_q_z).mean()
-        tc_loss = (log_q_z - log_prod_q_z).mean()
-        kld_loss = (log_prod_q_z - log_p_z).mean()
+        mi_loss = (log_q_zx - log_q_z).sum()
+        tc_loss = (log_q_z - log_prod_q_z).sum()
+        kld_loss = (log_prod_q_z - log_p_z).sum()
 
         if self.training:
             self.num_iter += 1
@@ -175,7 +175,7 @@ class VaeKLCriterion(FairseqCriterion):
             anneal_rate = 1.0
 
         loss = (
-            recons_loss / batch_size
+            recons_loss
             + self.alpha * mi_loss
             + weight * (self.beta * tc_loss + anneal_rate * self.gamma * kld_loss)
         )
@@ -220,6 +220,7 @@ class VaeKLCriterion(FairseqCriterion):
         loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
         vae_loss_sum = sum(log.get("vae_loss", 0) for log in logging_outputs)
         kl_loss_sum = sum(log.get("kl_loss", 0) for log in logging_outputs)
+        sample_sum = sum(log.get("sample_size", 0) for log in logging_outputs)
 
         source_recons_sum = sum(log.get("source_recons", 0) for log in logging_outputs)
         source_KLD_sum = sum(log.get("source_KLD", 0) for log in logging_outputs)
@@ -234,20 +235,20 @@ class VaeKLCriterion(FairseqCriterion):
         # ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
         # sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
 
-        worker = len(logging_outputs)
-        metrics.log_scalar("loss", loss_sum / worker, round=3)
-        metrics.log_scalar("vae_loss", vae_loss_sum / worker, round=3)
-        metrics.log_scalar("kl_loss", kl_loss_sum / worker, round=3)
+        # sample_size = len(logging_outputs)
+        metrics.log_scalar("loss", loss_sum / sample_sum, round=3)
+        metrics.log_scalar("vae_loss", vae_loss_sum / sample_sum, round=3)
+        metrics.log_scalar("kl_loss", kl_loss_sum / sample_sum, round=3)
 
-        metrics.log_scalar("source_recons", source_recons_sum / worker, round=3)
-        metrics.log_scalar("source_KLD", source_KLD_sum / worker, round=3)
-        metrics.log_scalar("source_TC_loss", source_TC_loss_sum / worker, round=3)
-        metrics.log_scalar("source_MI_loss", source_MI_loss_sum / worker, round=3)
+        metrics.log_scalar("source_recons", source_recons_sum / sample_sum, round=3)
+        metrics.log_scalar("source_KLD", source_KLD_sum / sample_sum, round=3)
+        metrics.log_scalar("source_TC_loss", source_TC_loss_sum / sample_sum, round=3)
+        metrics.log_scalar("source_MI_loss", source_MI_loss_sum / sample_sum, round=3)
 
-        metrics.log_scalar("target_recons", target_recons_sum / worker, round=3)
-        metrics.log_scalar("target_KLD", target_KLD_sum / worker, round=3)
-        metrics.log_scalar("target_TC_loss", target_TC_loss_sum / worker, round=3)
-        metrics.log_scalar("target_MI_loss", target_MI_loss_sum / worker, round=3)
+        metrics.log_scalar("target_recons", target_recons_sum / sample_sum, round=3)
+        metrics.log_scalar("target_KLD", target_KLD_sum / sample_sum, round=3)
+        metrics.log_scalar("target_TC_loss", target_TC_loss_sum / sample_sum, round=3)
+        metrics.log_scalar("target_MI_loss", target_MI_loss_sum / sample_sum, round=3)
 
     @staticmethod
     def logging_outputs_can_be_summed() -> bool:
