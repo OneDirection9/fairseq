@@ -64,12 +64,14 @@ class VaeKLCriterion(FairseqCriterion):
             sample["source_lang_batch"],
             net_out["source_encoder_out"],
             net_out["source_decoder_out"],
+            model.update_num,
             reduce=reduce,
         )
         target_losses = self.compute_single_lang_losses(
             sample["target_lang_batch"],
             net_out["target_encoder_out"],
             net_out["target_decoder_out"],
+            model.update_num,
             reduce=reduce,
         )
         vae_loss = source_losses["loss"] + target_losses["loss"]
@@ -103,7 +105,7 @@ class VaeKLCriterion(FairseqCriterion):
 
         return loss, sample_size, logging_output
 
-    def compute_single_lang_losses(self, sample, encoder_out, decoder_out, reduce=True):
+    def compute_single_lang_losses(self, sample, encoder_out, decoder_out, update_num, reduce=True):
         """
         Args:
             model:
@@ -168,7 +170,7 @@ class VaeKLCriterion(FairseqCriterion):
         kld_loss = (log_prod_q_z - log_p_z).sum()
 
         if self.training:
-            anneal_rate = min(0 + 1 * self.model.update_num / self.anneal_steps, 1)
+            anneal_rate = min(0 + 1 * update_num / self.anneal_steps, 1)
         else:
             anneal_rate = 1.0
 
