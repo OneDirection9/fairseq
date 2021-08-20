@@ -55,7 +55,7 @@ class VaeKLCriterion(FairseqCriterion):
         """
         bsz = sample["source_lang_batch"]["nsentences"]
         ntokens = sample["source_lang_batch"]["ntokens"] + sample["target_lang_batch"]["ntokens"]
-        sample_size = bsz + bsz if self.sentence_avg else ntokens
+        sample_size = bsz
 
         net_out = model(
             sample["source_lang_batch"]["net_input"], sample["target_lang_batch"]["net_input"]
@@ -89,7 +89,7 @@ class VaeKLCriterion(FairseqCriterion):
             "loss": loss.data,
             "vae_loss": vae_loss.data,
             "kl_loss": kl_loss.data,
-            "sample_size": bsz,
+            "sample_size": sample_size,
             "ntokens": ntokens,
             "nsentences": bsz * 2,
             "source_recons": source_losses["reconstruction"].data / bsz,
@@ -102,7 +102,7 @@ class VaeKLCriterion(FairseqCriterion):
             "target_MI_loss": target_losses["MI_loss"].data,
         }
 
-        return loss, bsz, logging_output
+        return loss, sample_size, logging_output
 
     def compute_single_lang_losses(self, sample, encoder_out, decoder_out, reduce=True):
         """
