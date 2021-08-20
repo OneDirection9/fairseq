@@ -39,7 +39,6 @@ class VaeKLCriterion(FairseqCriterion):
         super().__init__(task)
         self.sentence_avg = sentence_avg
         self.training = True
-        self.num_iter = 0
 
         self.alpha = alpha
         self.beta = beta
@@ -169,8 +168,7 @@ class VaeKLCriterion(FairseqCriterion):
         kld_loss = (log_prod_q_z - log_p_z).sum()
 
         if self.training:
-            self.num_iter += 1
-            anneal_rate = min(0 + 1 * self.num_iter / self.anneal_steps, 1)
+            anneal_rate = min(0 + 1 * self.model.update_num / self.anneal_steps, 1)
         else:
             anneal_rate = 1.0
 
