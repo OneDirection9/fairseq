@@ -633,8 +633,8 @@ class Controller(nn.Module):
         final_hiddens = final_hiddens.transpose(0, 1).flatten(start_dim=1)
         final_cells = final_cells.transpose(0, 1).flatten(start_dim=1)
 
-        final_hiddens = F.leaky_relu(final_hiddens)
-        final_cells = F.leaky_relu(final_cells)
+        final_hiddens = F.tanh(final_hiddens)
+        final_cells = F.tanh(final_cells)
 
         # B x (E * H_in) -> B x hidden_dim
         final_hiddens = self.fc_hidden(final_hiddens)
