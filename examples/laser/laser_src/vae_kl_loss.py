@@ -9,7 +9,7 @@ from fairseq import metrics
 from fairseq.criterions import FairseqCriterion, register_criterion
 from fairseq.dataclass import FairseqDataclass
 
-eps = 1e-7
+eps = 1e-6
 
 
 @dataclass
@@ -198,7 +198,7 @@ class VaeKLCriterion(FairseqCriterion):
         importance_weights.view(-1)[::batch_size] = 1 / dataset_size
         importance_weights.view(-1)[1::batch_size] = strat_weight
         importance_weights[batch_size - 2, 0] = strat_weight
-        log_importance_weights = importance_weights.log()
+        log_importance_weights = (importance_weights + eps).log()
 
         mat_log_q_z += log_importance_weights.view(batch_size, batch_size, 1)
 
