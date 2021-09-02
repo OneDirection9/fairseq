@@ -61,7 +61,7 @@ class VaeKLCriterion(FairseqCriterion):
         """
         bsz = sample["source_lang_batch"]["nsentences"]
         ntokens = sample["source_lang_batch"]["ntokens"] + sample["target_lang_batch"]["ntokens"]
-        sample_size = bsz
+        sample_size = 1
 
         net_out = model(
             sample["source_lang_batch"]["net_input"], sample["target_lang_batch"]["net_input"]
@@ -89,7 +89,7 @@ class VaeKLCriterion(FairseqCriterion):
             net_out["target_encoder_out"]["controller_out"]["mu"],
             net_out["target_encoder_out"]["controller_out"]["log_var"],
         )
-        kl_loss = kl_loss.sum()
+        kl_loss = kl_loss.mean()
 
         loss = vae_loss + kl_loss
 
@@ -100,11 +100,11 @@ class VaeKLCriterion(FairseqCriterion):
             "sample_size": sample_size,
             "ntokens": ntokens,
             "nsentences": bsz * 2,
-            "source_recons": source_losses["reconstruction"].data / bsz,
+            "source_recons": source_losses["reconstruction"].data,
             "source_KLD": source_losses["KLD"].data,
             "source_TC_loss": source_losses["TC_loss"].data,
             "source_MI_loss": source_losses["MI_loss"].data,
-            "target_recons": target_losses["reconstruction"].data / bsz,
+            "target_recons": target_losses["reconstruction"].data,
             "target_KLD": target_losses["KLD"].data,
             "target_TC_loss": target_losses["TC_loss"].data,
             "target_MI_loss": target_losses["MI_loss"].data,
@@ -173,7 +173,7 @@ class VaeKLCriterion(FairseqCriterion):
             log_probs,
             tgt_tokens,
             ignore_index=self.padding_idx,
-            reduction="sum" if reduce else "none",
+            reduction="sum",
         )
 
         log_q_zx = self.log_density_gaussian(z, mu, log_var).sum(dim=1)
@@ -199,16 +199,16 @@ class VaeKLCriterion(FairseqCriterion):
         importance_weights.view(-1)[::batch_size] = 1 / dataset_size
         importance_weights.view(-1)[1::batch_size] = strat_weight
         importance_weights[batch_size - 2, 0] = strat_weight
-        log_importance_weights = (importance_weights + eps).log()
+        log_importance_weights = importance_weights.log()
 
         mat_log_q_z += log_importance_weights.view(batch_size, batch_size, 1)
 
         log_q_z = torch.logsumexp(mat_log_q_z.sum(2), dim=1, keepdim=False)
         log_prod_q_z = torch.logsumexp(mat_log_q_z, dim=1, keepdim=False).sum(1)
 
-        mi_loss = (log_q_zx - log_q_z).sum()
-        tc_loss = (log_q_z - log_prod_q_z).sum()
-        kld_loss = (log_prod_q_z - log_p_z).sum()
+        mi_loss = (log_q_zx - log_q_z).mean()
+        tc_loss = (log_q_z - log_prod_q_z).mean()
+        kld_loss = (log_prod_q_z - log_p_z).mean()
 
         if self.training:
             anneal_rate = min(0 + 1 * update_num / self.anneal_steps, 1)
@@ -216,14 +216,14 @@ class VaeKLCriterion(FairseqCriterion):
             anneal_rate = 1.0
 
         loss = (
-            recons_loss
+            recons_loss / sample["ntokens"]
             + self.alpha * mi_loss
             + weight * (self.beta * tc_loss + anneal_rate * self.gamma * kld_loss)
         )
 
         return {
             "loss": loss,
-            "reconstruction": recons_loss,
+            "reconstruction": recons_loss / sample["ntokens"],
             "KLD": kld_loss,
             "TC_loss": tc_loss,
             "MI_loss": mi_loss,
@@ -277,7 +277,6 @@ class VaeKLCriterion(FairseqCriterion):
         loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
         vae_loss_sum = sum(log.get("vae_loss", 0) for log in logging_outputs)
         kl_loss_sum = sum(log.get("kl_loss", 0) for log in logging_outputs)
-        sample_sum = sum(log.get("sample_size", 0) for log in logging_outputs)
 
         source_recons_sum = sum(log.get("source_recons", 0) for log in logging_outputs)
         source_KLD_sum = sum(log.get("source_KLD", 0) for log in logging_outputs)
@@ -291,21 +290,21 @@ class VaeKLCriterion(FairseqCriterion):
 
         # ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
         # sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
+        workers = len(logging_outputs)
 
-        # sample_size = len(logging_outputs)
-        metrics.log_scalar("loss", loss_sum / sample_sum, round=3)
-        metrics.log_scalar("vae_loss", vae_loss_sum / sample_sum, round=3)
-        metrics.log_scalar("kl_loss", kl_loss_sum / sample_sum, round=3)
+        metrics.log_scalar("loss", loss_sum / workers, round=3)
+        metrics.log_scalar("vae_loss", vae_loss_sum / workers, round=3)
+        metrics.log_scalar("kl_loss", kl_loss_sum / workers, round=3)
 
-        metrics.log_scalar("source_recons", source_recons_sum / sample_sum, round=3)
-        metrics.log_scalar("source_KLD", source_KLD_sum / sample_sum, round=3)
-        metrics.log_scalar("source_TC_loss", source_TC_loss_sum / sample_sum, round=3)
-        metrics.log_scalar("source_MI_loss", source_MI_loss_sum / sample_sum, round=3)
+        metrics.log_scalar("source_recons", source_recons_sum / workers, round=3)
+        metrics.log_scalar("source_KLD", source_KLD_sum / workers, round=3)
+        metrics.log_scalar("source_TC_loss", source_TC_loss_sum / workers, round=3)
+        metrics.log_scalar("source_MI_loss", source_MI_loss_sum / workers, round=3)
 
-        metrics.log_scalar("target_recons", target_recons_sum / sample_sum, round=3)
-        metrics.log_scalar("target_KLD", target_KLD_sum / sample_sum, round=3)
-        metrics.log_scalar("target_TC_loss", target_TC_loss_sum / sample_sum, round=3)
-        metrics.log_scalar("target_MI_loss", target_MI_loss_sum / sample_sum, round=3)
+        metrics.log_scalar("target_recons", target_recons_sum / workers, round=3)
+        metrics.log_scalar("target_KLD", target_KLD_sum / workers, round=3)
+        metrics.log_scalar("target_TC_loss", target_TC_loss_sum / workers, round=3)
+        metrics.log_scalar("target_MI_loss", target_MI_loss_sum / workers, round=3)
 
     @staticmethod
     def logging_outputs_can_be_summed() -> bool:
