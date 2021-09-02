@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import torch
 import torch.nn.functional as F
 from omegaconf import II
+from torch.distributions import Normal
 
 from fairseq import metrics
 from fairseq.criterions import FairseqCriterion, register_criterion
@@ -253,6 +254,22 @@ class VaeKLCriterion(FairseqCriterion):
         )
 
         return kl_1 + kl_2 - 0.5
+
+    def compute_js_loss(self, source_mu, source_log_var, target_mu, target_log_var):
+        def get_prob(mu, log_var):
+            dist = Normal(mu, torch.exp(0.5 * log_var))
+            val = dist.sample()
+            return dist.log_prob(val).exp()
+
+        def kl_loss(p, q):
+            return F.kl_div(p, q, reduction="batchmean", log_target=False)
+
+        source_prob = get_prob(source_mu, source_log_var)
+        target_prob = get_prob(target_mu, target_log_var)
+
+        log_mean_prob = (0.5 * (source_prob + target_prob)).log()
+        js_loss = 0.5 * (kl_loss(log_mean_prob, source_prob) + kl_loss(log_mean_prob, target_prob))
+        return js_loss
 
     @staticmethod
     def reduce_metrics(logging_outputs) -> None:
