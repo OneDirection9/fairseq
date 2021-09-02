@@ -256,19 +256,23 @@ class VaeKLCriterion(FairseqCriterion):
         return kl_1 + kl_2 - 0.5
 
     def compute_js_loss(self, source_mu, source_log_var, target_mu, target_log_var):
-        def get_prob(mu, log_var):
-            dist = Normal(mu, torch.exp(0.5 * log_var))
-            val = dist.sample()
-            return dist.log_prob(val).exp()
+        def compute(source_dist: Normal, target_dist: Normal):
+            sample = source_dist.sample()
 
-        def kl_loss(p, q):
-            return F.kl_div(p, q, reduction="batchmean", log_target=False)
+            source_prob = source_dist.log_prob(sample).exp()
+            target_prob = target_dist.log_prob(sample).exp()
 
-        source_prob = get_prob(source_mu, source_log_var)
-        target_prob = get_prob(target_mu, target_log_var)
+            log_mean_prob = (0.5 * (source_prob + target_prob)).log()
 
-        log_mean_prob = (0.5 * (source_prob + target_prob)).log()
-        js_loss = 0.5 * (kl_loss(log_mean_prob, source_prob) + kl_loss(log_mean_prob, target_prob))
+            return F.kl_div(log_mean_prob, source_prob)
+
+        source_normal = Normal(source_mu, torch.exp(0.5 * source_log_var))
+        target_normal = Normal(target_mu, torch.exp(0.5 * target_log_var))
+
+        js_loss = 0.5 * (
+            compute(source_normal, target_normal) + compute(target_normal, source_normal)
+        )
+
         return js_loss
 
     @staticmethod
