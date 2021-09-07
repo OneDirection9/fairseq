@@ -83,13 +83,12 @@ class VaeKLCriterion(FairseqCriterion):
         )
         vae_loss = source_losses["loss"] + target_losses["loss"]
 
-        kl_loss = self.compute_kl_loss(
+        kl_loss = self.compute_js_loss(
             net_out["source_encoder_out"]["controller_out"]["mu"],
             net_out["source_encoder_out"]["controller_out"]["log_var"],
             net_out["target_encoder_out"]["controller_out"]["mu"],
             net_out["target_encoder_out"]["controller_out"]["log_var"],
         )
-        kl_loss = kl_loss.mean()
 
         loss = vae_loss + kl_loss
 
@@ -264,7 +263,7 @@ class VaeKLCriterion(FairseqCriterion):
 
             log_mean_prob = (0.5 * (source_prob + target_prob)).log()
 
-            return F.kl_div(log_mean_prob, source_prob)
+            return F.kl_div(log_mean_prob, source_prob, reduction="batchmean", log_target=False)
 
         source_normal = Normal(source_mu, torch.exp(0.5 * source_log_var))
         target_normal = Normal(target_mu, torch.exp(0.5 * target_log_var))
@@ -298,7 +297,7 @@ class VaeKLCriterion(FairseqCriterion):
 
         metrics.log_scalar("loss", loss_sum / workers, round=3)
         metrics.log_scalar("vae_loss", vae_loss_sum / workers, round=3)
-        metrics.log_scalar("kl_loss", kl_loss_sum / workers, round=3)
+        metrics.log_scalar("kl_loss", kl_loss_sum / workers, round=5)
 
         metrics.log_scalar("source_recons", source_recons_sum / workers, round=3)
         metrics.log_scalar("source_KLD", source_KLD_sum / workers, round=3)
