@@ -262,7 +262,9 @@ class VaeKLCriterion(FairseqCriterion):
             target_prob = target_dist.log_prob(sample).exp()
 
             mean_prob = 0.5 * (source_prob + target_prob)
-            return torch.log(source_prob / mean_prob)
+            loss = torch.log(source_prob / mean_prob)
+            bsz, _ = loss.size()
+            return loss.sum() / bsz
 
         source_normal = Normal(source_mu, torch.exp(0.5 * source_log_var))
         target_normal = Normal(target_mu, torch.exp(0.5 * target_log_var))
