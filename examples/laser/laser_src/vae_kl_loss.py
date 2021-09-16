@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import torch
 import torch.nn.functional as F
 from omegaconf import II
-from torch.distributions import Normal
+from torch.distributions import Normal, kl_divergence
 
 from fairseq import metrics
 from fairseq.criterions import FairseqCriterion, register_criterion
@@ -83,7 +83,7 @@ class VaeKLCriterion(FairseqCriterion):
         )
         vae_loss = source_losses["loss"] + target_losses["loss"]
 
-        kl_loss = self.compute_js_loss(
+        kl_loss = self.compute_kl_loss_v2(
             net_out["source_encoder_out"]["controller_out"]["mu"],
             net_out["source_encoder_out"]["controller_out"]["log_var"],
             net_out["target_encoder_out"]["controller_out"]["mu"],
@@ -253,6 +253,15 @@ class VaeKLCriterion(FairseqCriterion):
         )
 
         return kl_1 + kl_2 - 0.5
+
+    def compute_kl_loss_v2(self, source_mu, source_log_var, target_mu, target_log_var):
+        source_normal = Normal(source_mu, torch.exp(0.5 * source_log_var))
+        target_normal = Normal(target_mu, torch.exp(0.5 * target_log_var))
+
+        p_q = kl_divergence(source_normal, target_normal)
+        q_p = kl_divergence(target_normal, source_normal)
+
+        return (p_q + q_p) / 2
 
     def compute_js_loss(self, source_mu, source_log_var, target_mu, target_log_var):
         def compute(source_dist: Normal, target_dist: Normal):
