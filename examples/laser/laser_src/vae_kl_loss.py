@@ -260,8 +260,9 @@ class VaeKLCriterion(FairseqCriterion):
 
         p_q = kl_divergence(source_normal, target_normal)
         q_p = kl_divergence(target_normal, source_normal)
+        bsz, _ = p_q.size()
 
-        return (p_q + q_p) / 2
+        return (p_q.sum() + q_p.sum()) / bsz
 
     def compute_js_loss(self, source_mu, source_log_var, target_mu, target_log_var):
         def compute(source_dist: Normal, target_dist: Normal):
