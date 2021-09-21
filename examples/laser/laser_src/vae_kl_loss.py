@@ -32,11 +32,15 @@ class VaeKLCriterionConfig(FairseqDataclass):
         default=1000,
         metadata={"help": "hyper-parameters for Beta-tcvae"},
     )
+    lam: int = field(
+        default=1,
+        metadata={"help": "lamabda value to controll js loss"}
+    )
 
 
 @register_criterion("vae_kl", dataclass=VaeKLCriterionConfig)
 class VaeKLCriterion(FairseqCriterion):
-    def __init__(self, task, sentence_avg, alpha, beta, gamma, anneal_steps):
+    def __init__(self, task, sentence_avg, alpha, beta, gamma, anneal_steps, lam):
         super().__init__(task)
         self.sentence_avg = sentence_avg
         self.training = True
@@ -45,6 +49,7 @@ class VaeKLCriterion(FairseqCriterion):
         self.beta = beta
         self.gamma = gamma
         self.anneal_steps = anneal_steps
+        self.lam = lam
 
         max_capacity = 25
         Capaticy_max_iter = int(1e5)
@@ -90,7 +95,7 @@ class VaeKLCriterion(FairseqCriterion):
             net_out["target_encoder_out"]["controller_out"]["log_var"],
         )
 
-        loss = vae_loss + kl_loss
+        loss = vae_loss + self.lam * kl_loss
 
         logging_output = {
             "loss": loss.data,
