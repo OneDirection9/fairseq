@@ -33,6 +33,7 @@ fairseq-train \
   --decoder-embed-dim 320 \
   --warmup-init-lr 0.001 \
   --disable-validation \
+  --ddp-backend no_c10d \
   --criterion vae_kl \
   --alpha 1.0 \
   --beta 1.0 \
