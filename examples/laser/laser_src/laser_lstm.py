@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 from fairseq import options, utils
 from fairseq.models import (
+    BaseFairseqModel,
     FairseqEncoder,
     FairseqEncoderDecoderModel,
     FairseqIncrementalDecoder,
@@ -18,27 +19,25 @@ from fairseq.models import (
 
 
 @register_model("laser_lstm")
-class LSTMModel(FairseqEncoderDecoderModel):
-    def __init__(self, encoder, decoder):
-        super().__init__(encoder, decoder)
+class LSTMModel(BaseFairseqModel):
+    def __init__(self, base_model, model=None):
+        super().__init__()
+
+        self.base_model = base_model
+        self.model = model
 
         self.update_num = 0
 
-    def forward(self, source_lang_input, target_lang_input):
-        source_encoder_out = self.encoder(
-            source_lang_input["src_tokens"],
-            source_lang_input["src_lengths"],
-            source_lang_input["dataset_name"],
-        )
+    def forward(self, source_lang_input, target_lang_input=None):
+        source_out = self.base_model(**source_lang_input)
 
-        decoder_out = self.decoder(
-            source_lang_input["prev_output_tokens"],
-            source_encoder_out,
-        )
+        target_out = None
+        if self.model is not None and target_lang_input is not None:
+            target_out = self.model(**target_lang_input)
 
         return {
-            **decoder_out,
-            "source_encoder_out": source_encoder_out,
+            "source_out": source_out,
+            "target_out": target_out,
         }
 
     @staticmethod
@@ -151,6 +150,10 @@ class LSTMModel(FairseqEncoderDecoderModel):
             "--controller-latent-dim", type=int, metavar="N", help="controller latent dim"
         )
 
+        parser.add_argument(
+            "--base-model", type=str, default=None, help="pretrained language model"
+        )
+
     @classmethod
     def build_model(cls, args, task):
         """Build a new model instance."""
@@ -176,40 +179,64 @@ class LSTMModel(FairseqEncoderDecoderModel):
                 args.decoder_embed_path, task.target_dictionary, args.decoder_embed_dim
             )
 
-        encoder = LSTMEncoder(
-            dictionary=task.source_dictionary,
-            embed_dim=args.encoder_embed_dim,
-            hidden_size=args.encoder_hidden_size,
-            num_layers=args.encoder_layers,
-            dropout_in=args.encoder_dropout_in,
-            dropout_out=args.encoder_dropout_out,
-            bidirectional=args.encoder_bidirectional,
-            pretrained_embed=pretrained_encoder_embed,
-            fixed_embeddings=args.fixed_embeddings,
-            controller_hidden_dim=args.controller_hidden_dim,
-            controller_latent_dim=args.controller_latent_dim,
-            controller_output_dim=args.decoder_layers * args.decoder_hidden_size * 2,
-        )
+        def build_encoder_decoder_model():
+            encoder = LSTMEncoder(
+                dictionary=task.source_dictionary,
+                embed_dim=args.encoder_embed_dim,
+                hidden_size=args.encoder_hidden_size,
+                num_layers=args.encoder_layers,
+                dropout_in=args.encoder_dropout_in,
+                dropout_out=args.encoder_dropout_out,
+                bidirectional=args.encoder_bidirectional,
+                pretrained_embed=pretrained_encoder_embed,
+                fixed_embeddings=args.fixed_embeddings,
+                controller_hidden_dim=args.controller_hidden_dim,
+                controller_latent_dim=args.controller_latent_dim,
+                controller_output_dim=args.decoder_layers * args.decoder_hidden_size * 2,
+            )
 
-        assert task.source_dictionary == task.target_dictionary
-        decoder = LSTMDecoder(
-            dictionary=task.source_dictionary,
-            embed_dim=args.decoder_embed_dim,
-            hidden_size=args.decoder_hidden_size,
-            out_embed_dim=args.decoder_out_embed_dim,
-            num_layers=args.decoder_layers,
-            dropout_in=args.decoder_dropout_in,
-            dropout_out=args.decoder_dropout_out,
-            zero_init=options.eval_bool(args.decoder_zero_init),
-            encoder_embed_dim=args.encoder_embed_dim,
-            encoder_output_units=encoder.output_units,
-            pretrained_embed=pretrained_decoder_embed,
-        )
-        return cls(encoder, decoder)
+            assert task.source_dictionary == task.target_dictionary
+            decoder = LSTMDecoder(
+                dictionary=task.source_dictionary,
+                embed_dim=args.decoder_embed_dim,
+                hidden_size=args.decoder_hidden_size,
+                out_embed_dim=args.decoder_out_embed_dim,
+                num_layers=args.decoder_layers,
+                dropout_in=args.decoder_dropout_in,
+                dropout_out=args.decoder_dropout_out,
+                zero_init=options.eval_bool(args.decoder_zero_init),
+                encoder_embed_dim=args.encoder_embed_dim,
+                encoder_output_units=encoder.output_units,
+                pretrained_embed=pretrained_decoder_embed,
+            )
+            return TMPModel(encoder, decoder)
+
+        base_model = build_encoder_decoder_model()
+
+        model = None
+        if args.base_model is not None:
+            model = build_encoder_decoder_model()
+
+            # TODO: load checkpoint
+            # Fix base model
+            for p in base_model.parameters():
+                p.requires_grad = False
+
+        return cls(base_model, model)
 
     def set_num_updates(self, num_updates):
         super().set_num_updates(num_updates)
         self.update_num = num_updates
+
+
+class TMPModel(FairseqEncoderDecoderModel):
+    def forward(self, src_tokens, src_lengths, prev_output_tokens, **kwargs):
+        encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, **kwargs)
+        decoder_out = self.decoder(prev_output_tokens, encoder_out)
+        return {
+            "encoder_out": encoder_out,
+            "decoder_out": decoder_out,
+        }
 
 
 class LSTMEncoder(FairseqEncoder):
@@ -637,3 +664,4 @@ def base_architecture(args):
 
     args.controller_latent_dim = getattr(args, "controller_latent_dim", 1024)
     args.controller_hidden_dim = getattr(args, "controller_hidden_dim", 1024)
+    args.base_model = getattr(args, "base_model", None)

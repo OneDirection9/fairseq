@@ -32,10 +32,7 @@ class VaeKLCriterionConfig(FairseqDataclass):
         default=1000,
         metadata={"help": "hyper-parameters for Beta-tcvae"},
     )
-    lam: int = field(
-        default=1,
-        metadata={"help": "lamabda value to controll js loss"}
-    )
+    lam: int = field(default=1, metadata={"help": "lamabda value to controll js loss"})
 
 
 @register_criterion("vae_kl", dataclass=VaeKLCriterionConfig)
@@ -50,12 +47,6 @@ class VaeKLCriterion(FairseqCriterion):
         self.gamma = gamma
         self.anneal_steps = anneal_steps
         self.lam = lam
-
-        max_capacity = 25
-        Capaticy_max_iter = int(1e5)
-        self.C_max = torch.Tensor([max_capacity])
-        self.C_stop_iter = Capaticy_max_iter
-        self.loss_type = "B"
 
     def forward(self, model, sample, reduce=True):
         """
@@ -74,26 +65,36 @@ class VaeKLCriterion(FairseqCriterion):
 
         source_losses = self.compute_single_lang_losses(
             sample["source_lang_batch"],
-            net_out["source_encoder_out"],
-            net_out["source_decoder_out"],
+            net_out["source_out"]["encoder_out"],
+            net_out["source_out"]["decoder_out"],
             model.update_num,
             reduce=reduce,
         )
-        target_losses = self.compute_single_lang_losses(
-            sample["target_lang_batch"],
-            net_out["target_encoder_out"],
-            net_out["target_decoder_out"],
-            model.update_num,
-            reduce=reduce,
-        )
-        vae_loss = source_losses["loss"] + target_losses["loss"]
 
-        kl_loss = self.compute_kl_loss_v2(
-            net_out["source_encoder_out"]["controller_out"]["mu"],
-            net_out["source_encoder_out"]["controller_out"]["log_var"],
-            net_out["target_encoder_out"]["controller_out"]["mu"],
-            net_out["target_encoder_out"]["controller_out"]["log_var"],
+        if net_out["target_out"] is not None:
+            target_losses = self.compute_single_lang_losses(
+                sample["target_lang_batch"],
+                net_out["target_out"]["encoder_out"],
+                net_out["target_out"]["decoder_out"],
+                model.update_num,
+                reduce=reduce,
+            )
+        else:
+            target_losses = None
+
+        vae_loss = (
+            source_losses["loss"] + target_losses["loss"] if target_losses is not None else 0.0
         )
+
+        if net_out["target_out"] is not None:
+            kl_loss = self.compute_kl_loss_v2(
+                net_out["source_out"]["encoder_out"]["controller_out"]["mu"],
+                net_out["source_out"]["encoder_out"]["controller_out"]["log_var"],
+                net_out["target_out"]["encoder_out"]["controller_out"]["mu"],
+                net_out["target_out"]["encoder_out"]["controller_out"]["log_var"],
+            )
+        else:
+            kl_loss = 0.0
 
         loss = vae_loss + self.lam * kl_loss
 
@@ -108,47 +109,19 @@ class VaeKLCriterion(FairseqCriterion):
             "source_KLD": source_losses["KLD"].data,
             "source_TC_loss": source_losses["TC_loss"].data,
             "source_MI_loss": source_losses["MI_loss"].data,
-            "target_recons": target_losses["reconstruction"].data,
-            "target_KLD": target_losses["KLD"].data,
-            "target_TC_loss": target_losses["TC_loss"].data,
-            "target_MI_loss": target_losses["MI_loss"].data,
         }
 
+        if target_losses is not None:
+            logging_output.update(
+                {
+                    "target_recons": target_losses["reconstruction"].data,
+                    "target_KLD": target_losses["KLD"].data,
+                    "target_TC_loss": target_losses["TC_loss"].data,
+                    "target_MI_loss": target_losses["MI_loss"].data,
+                }
+            )
+
         return loss, sample_size, logging_output
-
-    def loss_function(self, sample, encoder_out, decoder_out, update_num, reduce=True) -> dict:
-        dataset_len = self.task.dataset_size
-
-        mu = encoder_out["controller_out"]["mu"]
-        log_var = encoder_out["controller_out"]["log_var"]
-        tgt_tokens = sample["tgt_tokens"]
-
-        # decoder_out[0]: B x T x C
-        log_probs = F.log_softmax(decoder_out[0], dim=-1, dtype=torch.float32)
-        log_probs = log_probs.view(-1, log_probs.size(-1))
-        # B x T -> B * T,
-        tgt_tokens = tgt_tokens.view(-1)
-        recons_loss = F.nll_loss(
-            log_probs,
-            tgt_tokens,
-            ignore_index=self.padding_idx,
-            reduction="sum" if reduce else "none",
-        )
-
-        kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
-
-        kld_weight = mu.size(0) / dataset_len
-
-        if self.loss_type == "H":  # https://openreview.net/forum?id=Sy2fzU9gl
-            loss = recons_loss + self.beta * kld_weight * kld_loss
-        elif self.loss_type == "B":  # https://arxiv.org/pdf/1804.03599.pdf
-            self.C_max = self.C_max.to(tgt_tokens.device)
-            C = torch.clamp(self.C_max / self.C_stop_iter * self.num_iter, 0, self.C_max.data[0])
-            loss = recons_loss + self.gamma * kld_weight * (kld_loss - C).abs()
-        else:
-            raise ValueError("Undefined loss type.")
-
-        return {"loss": loss, "Reconstruction_Loss": recons_loss, "KLD": kld_loss}
 
     def compute_single_lang_losses(self, sample, encoder_out, decoder_out, update_num, reduce=True):
         """
