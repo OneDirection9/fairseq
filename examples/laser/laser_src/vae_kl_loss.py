@@ -62,6 +62,7 @@ class VaeKLCriterion(FairseqCriterion):
         net_out = model(
             sample["source_lang_batch"]["net_input"], sample["target_lang_batch"]["net_input"]
         )
+        has_target = net_out["target_out"] is not None
 
         source_losses = self.compute_single_lang_losses(
             sample["source_lang_batch"],
@@ -71,7 +72,7 @@ class VaeKLCriterion(FairseqCriterion):
             reduce=reduce,
         )
 
-        if net_out["target_out"] is not None:
+        if has_target:
             target_losses = self.compute_single_lang_losses(
                 sample["target_lang_batch"],
                 net_out["target_out"]["encoder_out"],
@@ -79,29 +80,22 @@ class VaeKLCriterion(FairseqCriterion):
                 model.update_num,
                 reduce=reduce,
             )
-        else:
-            target_losses = None
+            vae_loss = source_losses["loss"] + target_losses["loss"]
 
-        vae_loss = (
-            source_losses["loss"] + target_losses["loss"] if target_losses is not None else 0.0
-        )
-
-        if net_out["target_out"] is not None:
             kl_loss = self.compute_kl_loss_v2(
                 net_out["source_out"]["encoder_out"]["controller_out"]["mu"],
                 net_out["source_out"]["encoder_out"]["controller_out"]["log_var"],
                 net_out["target_out"]["encoder_out"]["controller_out"]["mu"],
                 net_out["target_out"]["encoder_out"]["controller_out"]["log_var"],
             )
+            loss = vae_loss + self.lam * kl_loss
         else:
-            kl_loss = 0.0
-
-        loss = vae_loss + self.lam * kl_loss
+            vae_loss = source_losses["loss"]
+            loss = vae_loss
 
         logging_output = {
             "loss": loss.data,
             "vae_loss": vae_loss.data,
-            "kl_loss": kl_loss.data,
             "sample_size": sample_size,
             "ntokens": ntokens,
             "nsentences": bsz * 2,
@@ -111,9 +105,10 @@ class VaeKLCriterion(FairseqCriterion):
             "source_MI_loss": source_losses["MI_loss"].data,
         }
 
-        if target_losses is not None:
+        if has_target:
             logging_output.update(
                 {
+                    "kl_loss": kl_loss.data,
                     "target_recons": target_losses["reconstruction"].data,
                     "target_KLD": target_losses["KLD"].data,
                     "target_TC_loss": target_losses["TC_loss"].data,
