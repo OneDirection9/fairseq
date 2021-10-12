@@ -73,7 +73,7 @@ def dual_language_collate(
                 "src_lengths": src_lengths,
                 "prev_output_tokens": prev_output_tokens,
             },
-            "tgt_tokens": tgt_tokens,
+            "target": tgt_tokens,
         }
 
     src_lang_batch = collate_language_pair("source")

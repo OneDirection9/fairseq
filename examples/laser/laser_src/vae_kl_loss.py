@@ -132,7 +132,7 @@ class VaeKLCriterion(FairseqCriterion):
         z = encoder_out["controller_out"]["z"]
         mu = encoder_out["controller_out"]["mu"]
         log_var = encoder_out["controller_out"]["log_var"]
-        tgt_tokens = sample["tgt_tokens"]
+        tgt_tokens = sample["target"]
 
         weight = 1  # kwargs['M_N']  # Account for the minibatch samples from the dataset
 
