@@ -47,7 +47,7 @@
       "type": "translation",
       "id": 2,
       "src": "./data/tatoeba/en-zh/train.zh-en.en",
-      "tgt": "./data/tatoeba/en-zh/train.zh-en.zh"
+      "tgt": "./data/tatoeba/en-zh/train.zh-en.en"
     }
   ]
 }
