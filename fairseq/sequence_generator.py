@@ -777,7 +777,7 @@ class EnsembleModel(nn.Module):
             if self.has_incremental_states():
                 decoder_out = model.decoder.forward(
                     tokens,
-                    encoder_out=encoder_out,
+                    encoder_out_dict=encoder_out,
                     incremental_state=incremental_states[i],
                 )
             else:
