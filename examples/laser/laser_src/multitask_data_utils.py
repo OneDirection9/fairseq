@@ -116,6 +116,8 @@ class MultitaskDatasetWrapper(BaseWrapperDataset):
         if "source_lang_batch" in ans and "target_lang_batch" in ans:
             ans["source_lang_batch"]["net_input"]["dataset_name"] = self.name
             ans["target_lang_batch"]["net_input"]["dataset_name"] = self.name
+        elif "net_input" in ans:
+            ans["net_input"]["dataset_name"] = self.name
 
         return ans
 
