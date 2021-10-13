@@ -5,7 +5,8 @@ if [ -z "${LASER}" ]; then
   exit
 fi
 
-path="${LASER}/checkpoints/laser_lstm/checkpoint25.pt"
+# path="${LASER}/checkpoints/laser_lstm/checkpoint1.pt"
+path="${LASER}/checkpoints/laser_lstm/checkpoint_last.pt"
 
 generate() {
   cfg_file=$1
@@ -13,7 +14,7 @@ generate() {
 
   fairseq-generate \
       "${cfg_file}" \
-      --user-dir laser \
+      --user-dir laser_src \
       --task laser \
       --gen-subset valid \
       --path "${path}" \
