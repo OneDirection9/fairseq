@@ -276,22 +276,21 @@ class VaeKLCriterion(FairseqCriterion):
         target_MI_loss_sum = sum(log.get("target_MI_loss", 0) for log in logging_outputs)
 
         # ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
-        # sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
-        workers = len(logging_outputs)
+        sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
 
-        metrics.log_scalar("loss", loss_sum / workers, round=3)
-        metrics.log_scalar("vae_loss", vae_loss_sum / workers, round=3)
-        metrics.log_scalar("kl_loss", kl_loss_sum / workers, round=5)
+        metrics.log_scalar("loss", loss_sum / sample_size, round=3)
+        metrics.log_scalar("vae_loss", vae_loss_sum / sample_size, round=3)
+        metrics.log_scalar("kl_loss", kl_loss_sum / sample_size, round=5)
 
-        metrics.log_scalar("source_recons", source_recons_sum / workers, round=3)
-        metrics.log_scalar("source_KLD", source_KLD_sum / workers, round=3)
-        metrics.log_scalar("source_TC_loss", source_TC_loss_sum / workers, round=3)
-        metrics.log_scalar("source_MI_loss", source_MI_loss_sum / workers, round=3)
+        metrics.log_scalar("source_recons", source_recons_sum / sample_size, round=3)
+        metrics.log_scalar("source_KLD", source_KLD_sum / sample_size, round=3)
+        metrics.log_scalar("source_TC_loss", source_TC_loss_sum / sample_size, round=3)
+        metrics.log_scalar("source_MI_loss", source_MI_loss_sum / sample_size, round=3)
 
-        metrics.log_scalar("target_recons", target_recons_sum / workers, round=3)
-        metrics.log_scalar("target_KLD", target_KLD_sum / workers, round=3)
-        metrics.log_scalar("target_TC_loss", target_TC_loss_sum / workers, round=3)
-        metrics.log_scalar("target_MI_loss", target_MI_loss_sum / workers, round=3)
+        metrics.log_scalar("target_recons", target_recons_sum / sample_size, round=3)
+        metrics.log_scalar("target_KLD", target_KLD_sum / sample_size, round=3)
+        metrics.log_scalar("target_TC_loss", target_TC_loss_sum / sample_size, round=3)
+        metrics.log_scalar("target_MI_loss", target_MI_loss_sum / sample_size, round=3)
 
     @staticmethod
     def logging_outputs_can_be_summed() -> bool:
