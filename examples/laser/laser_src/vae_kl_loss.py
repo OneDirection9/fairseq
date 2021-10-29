@@ -32,9 +32,9 @@ class VaeKLCriterionConfig(FairseqDataclass):
         default=25,
         metadata={"help": "max capacity"},
     )
-    c_stop_iter: int = field(
+    c_stop_iter: float = field(
         default=1e5,
-        metadata={"help", "capacity max iter"},
+        metadata={"help": "capacity max iter"},
     )
 
 
