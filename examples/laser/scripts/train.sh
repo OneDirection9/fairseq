@@ -34,8 +34,4 @@ fairseq-train \
   --warmup-init-lr 0.001 \
   --disable-validation \
   --ddp-backend no_c10d \
-  --criterion vae_kl \
-  --alpha 1.0 \
-  --beta 1.0 \
-  --gamma 1.0 \
-  --anneal-steps 1000
+  --criterion vae_kl

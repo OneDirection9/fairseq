@@ -16,37 +16,40 @@ eps = 1e-6
 @dataclass
 class VaeKLCriterionConfig(FairseqDataclass):
     sentence_avg: bool = II("optimization.sentence_avg")
-    alpha: float = field(
-        default=1.0,
-        metadata={"help": "hyper-parameters for Beta-tcvae"},
-    )
     beta: float = field(
         default=1.0,
-        metadata={"help": "hyper-parameters for Beta-tcvae"},
+        metadata={"help": "hyper-parameters for Beta-vae"},
     )
     gamma: float = field(
-        default=1.0,
-        metadata={"help": "hyper-parameters for Beta-tcvae"},
+        default=10.0,
+        metadata={"help": "hyper-parameters for Beta-vae"},
     )
-    anneal_steps: int = field(
-        default=1000,
-        metadata={"help": "hyper-parameters for Beta-tcvae"},
+    loss_type: str = field(
+        default="B",
+        metadata={"help": "loss type"},
     )
-    lam: int = field(default=1, metadata={"help": "lamabda value to controll js loss"})
+    c_max: int = field(
+        default=25,
+        metadata={"help": "max capacity"},
+    )
+    c_stop_iter: int = field(
+        default=1e5,
+        metadata={"help", "capacity max iter"},
+    )
 
 
 @register_criterion("vae_kl", dataclass=VaeKLCriterionConfig)
 class VaeKLCriterion(FairseqCriterion):
-    def __init__(self, task, sentence_avg, alpha, beta, gamma, anneal_steps, lam):
+    def __init__(self, task, sentence_avg, beta, gamma, loss_type, c_max, c_stop_iter):
         super().__init__(task)
         self.sentence_avg = sentence_avg
         self.training = True
 
-        self.alpha = alpha
         self.beta = beta
         self.gamma = gamma
-        self.anneal_steps = anneal_steps
-        self.lam = lam
+        self.loss_type = loss_type
+        self.c_max = torch.Tensor([c_max])
+        self.c_stop_iter = c_stop_iter
 
     def forward(self, model, sample, reduce=True):
         """
@@ -101,8 +104,6 @@ class VaeKLCriterion(FairseqCriterion):
             "nsentences": bsz * 2,
             "source_recons": source_losses["reconstruction"].data,
             "source_KLD": source_losses["KLD"].data,
-            "source_TC_loss": source_losses["TC_loss"].data,
-            "source_MI_loss": source_losses["MI_loss"].data,
         }
 
         if has_target:
@@ -111,8 +112,6 @@ class VaeKLCriterion(FairseqCriterion):
                     "kl_loss": kl_loss.data,
                     "target_recons": target_losses["reconstruction"].data,
                     "target_KLD": target_losses["KLD"].data,
-                    "target_TC_loss": target_losses["TC_loss"].data,
-                    "target_MI_loss": target_losses["MI_loss"].data,
                 }
             )
 
@@ -134,7 +133,8 @@ class VaeKLCriterion(FairseqCriterion):
         log_var = encoder_out["controller_out"]["log_var"]
         tgt_tokens = sample["target"]
 
-        weight = 1  # kwargs['M_N']  # Account for the minibatch samples from the dataset
+        batch_size, latent_dim = z.shape
+        kld_weight = batch_size / dataset_len
 
         # decoder_out[0]: B x T x C
         log_probs = F.log_softmax(decoder_out[0], dim=-1, dtype=torch.float32)
@@ -147,58 +147,23 @@ class VaeKLCriterion(FairseqCriterion):
             ignore_index=self.padding_idx,
             reduction="sum",
         )
+        recons_loss = recons_loss / sample["ntokens"]
 
-        log_q_zx = self.log_density_gaussian(z, mu, log_var).sum(dim=1)
+        kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
 
-        zeros = torch.zeros_like(z)
-        log_p_z = self.log_density_gaussian(z, zeros, zeros).sum(dim=1)
-
-        batch_size, latent_dim = z.shape
-        M_N = batch_size / dataset_len
-        mat_log_q_z = self.log_density_gaussian(
-            z.view(batch_size, 1, latent_dim),
-            mu.view(1, batch_size, latent_dim),
-            log_var.view(1, batch_size, latent_dim),
-        )
-
-        # Reference
-        # https://github.com/YannDubs/disentangling-vae/blob/535bbd2e9aeb5a200663a4f82f1d34e084c4ba8d/disvae/utils/math.py#L54 # noqa
-        dataset_size = (1 / M_N) * batch_size  # dataset size
-        strat_weight = (dataset_size - batch_size + 1) / (dataset_size * (batch_size - 1))
-        importance_weights = (
-            torch.Tensor(batch_size, batch_size).fill_(1 / (batch_size - 1)).to(tgt_tokens.device)
-        )
-        importance_weights.view(-1)[::batch_size] = 1 / dataset_size
-        importance_weights.view(-1)[1::batch_size] = strat_weight
-        importance_weights[batch_size - 2, 0] = strat_weight
-        log_importance_weights = importance_weights.log()
-
-        mat_log_q_z += log_importance_weights.view(batch_size, batch_size, 1)
-
-        log_q_z = torch.logsumexp(mat_log_q_z.sum(2), dim=1, keepdim=False)
-        log_prod_q_z = torch.logsumexp(mat_log_q_z, dim=1, keepdim=False).sum(1)
-
-        mi_loss = (log_q_zx - log_q_z).mean()
-        tc_loss = (log_q_z - log_prod_q_z).mean()
-        kld_loss = (log_prod_q_z - log_p_z).mean()
-
-        if self.training:
-            anneal_rate = min(0 + 1 * update_num / self.anneal_steps, 1)
+        if self.loss_type == "H":  # https://openreview.net/forum?id=Sy2fzU9gl
+            loss = recons_loss + self.beta * kld_weight * kld_loss
+        elif self.loss_type == "B":  # https://arxiv.org/pdf/1804.03599.pdf
+            self.c_max = self.c_max.to(tgt_tokens.device)
+            C = torch.clamp(self.c_max / self.c_stop_iter * update_num, 0, self.c_max.data[0])
+            loss = recons_loss + self.gamma * kld_weight * (kld_loss - C).abs()
         else:
-            anneal_rate = 1.0
-
-        loss = (
-            recons_loss / sample["ntokens"]
-            + self.alpha * mi_loss
-            + weight * (self.beta * tc_loss + anneal_rate * self.gamma * kld_loss)
-        )
+            raise ValueError("Undefined loss type.")
 
         return {
             "loss": loss,
-            "reconstruction": recons_loss / sample["ntokens"],
+            "reconstruction": recons_loss,
             "KLD": kld_loss,
-            "TC_loss": tc_loss,
-            "MI_loss": mi_loss,
         }
 
     def log_density_gaussian(self, x: torch.Tensor, mu: torch.Tensor, logvar: torch.Tensor):
@@ -267,13 +232,9 @@ class VaeKLCriterion(FairseqCriterion):
 
         source_recons_sum = sum(log.get("source_recons", 0) for log in logging_outputs)
         source_KLD_sum = sum(log.get("source_KLD", 0) for log in logging_outputs)
-        source_TC_loss_sum = sum(log.get("source_TC_loss", 0) for log in logging_outputs)
-        source_MI_loss_sum = sum(log.get("source_MI_loss", 0) for log in logging_outputs)
 
         target_recons_sum = sum(log.get("target_recons", 0) for log in logging_outputs)
         target_KLD_sum = sum(log.get("target_KLD", 0) for log in logging_outputs)
-        target_TC_loss_sum = sum(log.get("target_TC_loss", 0) for log in logging_outputs)
-        target_MI_loss_sum = sum(log.get("target_MI_loss", 0) for log in logging_outputs)
 
         # ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
         sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
@@ -284,13 +245,9 @@ class VaeKLCriterion(FairseqCriterion):
 
         metrics.log_scalar("source_recons", source_recons_sum / sample_size, round=3)
         metrics.log_scalar("source_KLD", source_KLD_sum / sample_size, round=3)
-        metrics.log_scalar("source_TC_loss", source_TC_loss_sum / sample_size, round=3)
-        metrics.log_scalar("source_MI_loss", source_MI_loss_sum / sample_size, round=3)
 
         metrics.log_scalar("target_recons", target_recons_sum / sample_size, round=3)
         metrics.log_scalar("target_KLD", target_KLD_sum / sample_size, round=3)
-        metrics.log_scalar("target_TC_loss", target_TC_loss_sum / sample_size, round=3)
-        metrics.log_scalar("target_MI_loss", target_MI_loss_sum / sample_size, round=3)
 
     @staticmethod
     def logging_outputs_can_be_summed() -> bool:
