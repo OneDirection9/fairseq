@@ -34,4 +34,5 @@ fairseq-train \
   --warmup-init-lr 0.001 \
   --disable-validation \
   --ddp-backend no_c10d \
-  --criterion vae_kl
+  --criterion vae_kl \
+  --gamma 100
