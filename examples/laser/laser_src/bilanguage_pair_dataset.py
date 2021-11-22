@@ -41,11 +41,7 @@ def dual_language_collate(
             left_pad=left_pad_source,
             pad_to_length=pad_to_length[key] if pad_to_length is not None else None,
         )
-        # sort by descending source length
         src_lengths = torch.LongTensor([s[key].ne(pad_idx).long().sum() for s in samples])
-        src_lengths, sort_order = src_lengths.sort(descending=True)
-        id = id.index_select(0, sort_order)
-        src_tokens = src_tokens.index_select(0, sort_order)
 
         ntokens = src_lengths.sum().item()
 
@@ -54,7 +50,6 @@ def dual_language_collate(
             left_pad=left_pad_target,
             pad_to_length=pad_to_length[key] if pad_to_length is not None else None,
         )
-        tgt_tokens = tgt_tokens.index_select(0, sort_order)
 
         prev_output_tokens = merge(
             key,
@@ -62,7 +57,6 @@ def dual_language_collate(
             move_eos_to_beginning=True,
             pad_to_length=pad_to_length[key] if pad_to_length is not None else None,
         )
-        prev_output_tokens = prev_output_tokens.index_select(0, sort_order)
 
         return {
             "id": id,

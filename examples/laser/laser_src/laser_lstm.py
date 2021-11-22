@@ -316,7 +316,9 @@ class LSTMEncoder(FairseqEncoder):
 
         # pack embedded source tokens into a PackedSequence
         try:
-            packed_x = nn.utils.rnn.pack_padded_sequence(x, src_lengths.data.tolist())
+            packed_x = nn.utils.rnn.pack_padded_sequence(
+                x, src_lengths.data.tolist(), enforce_sorted=False
+            )
         except BaseException:
             raise Exception(f"Packing failed in dataset {dataset_name}")
 
