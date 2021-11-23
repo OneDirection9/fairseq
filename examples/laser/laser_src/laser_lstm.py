@@ -31,9 +31,10 @@ class LSTMModel(BaseFairseqModel):
     def forward(self, source_lang_input, target_lang_input=None):
         source_out = self.base_model(**source_lang_input)
 
-        target_out = None
         if self.model is not None and target_lang_input is not None:
             target_out = self.model(**target_lang_input)
+        else:
+            target_out = None
 
         return {
             "source_out": source_out,
@@ -209,27 +210,30 @@ class LSTMModel(BaseFairseqModel):
                 encoder_output_units=encoder.output_units,
                 pretrained_embed=pretrained_decoder_embed,
             )
-            return TMPModel(encoder, decoder)
+            return EncoderDecoderWrapper(encoder, decoder)
 
         base_model = build_encoder_decoder_model()
 
-        model = None
         if args.base_model is not None:
             model = build_encoder_decoder_model()
+            final_model = cls(base_model, model)
 
-            # TODO: load checkpoint
-            # Fix base model
-            for p in base_model.parameters():
+            ckpt = torch.load(args.base_model)
+            final_model.load_state_dict(ckpt["model"], strict=False)
+
+            for p in final_model.base_model.parameters():
                 p.requires_grad = False
+        else:
+            final_model = cls(base_model, None)
 
-        return cls(base_model, model)
+        return final_model
 
     def set_num_updates(self, num_updates):
         super().set_num_updates(num_updates)
         self.update_num = num_updates
 
 
-class TMPModel(FairseqEncoderDecoderModel):
+class EncoderDecoderWrapper(FairseqEncoderDecoderModel):
     def forward(self, src_tokens, src_lengths, prev_output_tokens, **kwargs):
         encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, **kwargs)
         decoder_out = self.decoder(prev_output_tokens, encoder_out)

@@ -36,11 +36,15 @@ class VaeKLCriterionConfig(FairseqDataclass):
         default=1e5,
         metadata={"help": "capacity max iter"},
     )
+    lam: float = field(
+        default=1.0,
+        metadata={"help": "weight of KL loss"},
+    )
 
 
 @register_criterion("vae_kl", dataclass=VaeKLCriterionConfig)
 class VaeKLCriterion(FairseqCriterion):
-    def __init__(self, task, sentence_avg, beta, gamma, loss_type, c_max, c_stop_iter):
+    def __init__(self, task, sentence_avg, beta, gamma, loss_type, c_max, c_stop_iter, lam):
         super().__init__(task)
         self.sentence_avg = sentence_avg
         self.training = True
@@ -50,6 +54,7 @@ class VaeKLCriterion(FairseqCriterion):
         self.loss_type = loss_type
         self.c_max = torch.Tensor([c_max])
         self.c_stop_iter = c_stop_iter
+        self.lam = lam
 
     def forward(self, model, sample, reduce=True):
         """
