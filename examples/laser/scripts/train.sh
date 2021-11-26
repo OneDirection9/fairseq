@@ -6,7 +6,7 @@ if [ -z "${LASER}" ]; then
 fi
 
 save_dir="${LASER}/checkpoints/laser_lstm_multi"
-base_model="${LASER}/checkpoints/laser/only_base_model/checkpoint_last.pt"
+base_model="${LASER}/checkpoints/laser_lstm_only_base_model/checkpoint_last.pt"
 
 fairseq-train \
   "cfgs/laser.json" \
@@ -35,6 +35,6 @@ fairseq-train \
   --base-model "${base_model}" \
   --warmup-init-lr 0.001 \
   --disable-validation \
-  --ddp-backend no_c10d \
+  --ddp-backend legacy_ddp \
   --criterion vae_kl \
   --gamma 100
