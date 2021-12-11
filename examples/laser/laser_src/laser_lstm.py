@@ -300,6 +300,7 @@ class LSTMEncoder(FairseqEncoder):
             hidden_dim=controller_hidden_dim,
             latent_dim=controller_latent_dim,
             output_dim=controller_output_dim,
+            remap=controller_remap,
         )
 
     def forward(self, src_tokens, src_lengths, dataset_name):
