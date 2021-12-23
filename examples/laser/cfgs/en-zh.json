@@ -5,20 +5,20 @@
     {
       "type": "translation",
       "id": 2,
-      "src": "./data/news-commentary/en-zh/train.en-zh.zh",
-      "tgt": "./data/news-commentary/en-zh/train.en-zh.en"
+      "src": "./data/news-commentary/en-zh/train.en-zh.en",
+      "tgt": "./data/news-commentary/en-zh/train.en-zh.zh"
     },
     {
       "type": "translation",
       "id": 2,
-      "src": "./data/WikiMatrix/en-zh/train.en-zh.zh",
-      "tgt": "./data/WikiMatrix/en-zh/train.en-zh.en"
+      "src": "./data/WikiMatrix/en-zh/train.en-zh.en",
+      "tgt": "./data/WikiMatrix/en-zh/train.en-zh.zh"
     },
     {
       "type": "translation",
       "id": 2,
-      "src": "./data/mt/en-zh/train.en-zh.zh",
-      "tgt": "./data/mt/en-zh/train.en-zh.en"
+      "src": "./data/mt/en-zh/train.en-zh.en",
+      "tgt": "./data/mt/en-zh/train.en-zh.zh"
     }
   ],
   "valid": [

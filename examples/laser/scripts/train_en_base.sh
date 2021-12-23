@@ -8,7 +8,7 @@ fi
 save_dir="${LASER}/checkpoints/laser_lstm"
 
 fairseq-train \
-  "cfgs/laser.json" \
+  "cfgs/en-zh.json" \
   --user-dir laser_src \
   --log-interval 100 --log-format simple \
   --task laser --arch laser_lstm \
@@ -33,6 +33,6 @@ fairseq-train \
   --decoder-embed-dim 320 \
   --warmup-init-lr 0.001 \
   --disable-validation \
-  --ddp-backend no_c10d \
+  --ddp-backend legacy_ddp \
   --criterion vae_kl \
   --gamma 100

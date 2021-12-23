@@ -180,7 +180,7 @@ class LSTMModel(BaseFairseqModel):
                 args.decoder_embed_path, task.target_dictionary, args.decoder_embed_dim
             )
 
-        def build_encoder_decoder_model(remap=False):
+        def build_encoder_decoder_model():
             encoder = LSTMEncoder(
                 dictionary=task.source_dictionary,
                 embed_dim=args.encoder_embed_dim,
@@ -194,7 +194,6 @@ class LSTMModel(BaseFairseqModel):
                 controller_hidden_dim=args.controller_hidden_dim,
                 controller_latent_dim=args.controller_latent_dim,
                 controller_output_dim=args.decoder_layers * args.decoder_hidden_size * 2,
-                controller_remap=remap,
             )
 
             assert task.source_dictionary == task.target_dictionary
@@ -213,10 +212,10 @@ class LSTMModel(BaseFairseqModel):
             )
             return EncoderDecoderWrapper(encoder, decoder)
 
-        base_model = build_encoder_decoder_model(False)
+        base_model = build_encoder_decoder_model()
 
         if args.base_model is not None:
-            model = build_encoder_decoder_model(True)
+            model = build_encoder_decoder_model()
             final_model = cls(base_model, model)
 
             ckpt = torch.load(args.base_model)
@@ -263,7 +262,6 @@ class LSTMEncoder(FairseqEncoder):
         controller_hidden_dim=512,
         controller_latent_dim=512,
         controller_output_dim=1024,
-        controller_remap=False,
     ):
         super().__init__(dictionary)
         self.num_layers = num_layers
@@ -300,7 +298,6 @@ class LSTMEncoder(FairseqEncoder):
             hidden_dim=controller_hidden_dim,
             latent_dim=controller_latent_dim,
             output_dim=controller_output_dim,
-            remap=controller_remap,
         )
 
     def forward(self, src_tokens, src_lengths, dataset_name):
@@ -553,7 +550,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
 
 
 class Controller(nn.Module):
-    def __init__(self, input_dim, hidden_dim, latent_dim, output_dim, remap=False):
+    def __init__(self, input_dim, hidden_dim, latent_dim, output_dim):
         super(Controller, self).__init__()
 
         self.input_dim = input_dim
@@ -569,10 +566,6 @@ class Controller(nn.Module):
 
         # TODO: nn.Linear or Linear
         self.fc_out = nn.Linear(latent_dim, output_dim)
-
-        if remap:
-            self.fc_mu_map = nn.Linear(latent_dim, latent_dim)
-            self.fc_var_map = nn.Linear(latent_dim, latent_dim)
 
     def forward(self, final_hiddens: torch.Tensor, final_cells: torch.Tensor):
         """
@@ -606,10 +599,6 @@ class Controller(nn.Module):
 
         # B x latent_dim -> B x output_dim
         recons = self.fc_out(z)
-
-        if hasattr(self, "fc_mu_map"):
-            mu = self.fc_mu_map(mu)
-            log_var = self.fc_var_map(log_var)
 
         return {"mu": mu, "log_var": log_var, "z": z, "recons": recons}
 
