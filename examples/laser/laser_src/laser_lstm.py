@@ -150,10 +150,17 @@ class LSTMModel(BaseFairseqModel):
         parser.add_argument(
             "--controller-latent-dim", type=int, metavar="N", help="controller latent dim"
         )
+        parser.add_argument(
+            "--aligner-hidden-dim", type=int, metavar="N", help="aligner hidden dim"
+        )
+        parser.add_argument(
+            "--aligner-latent-dim", type=int, metavar="N", help="aligner latent dim"
+        )
 
         parser.add_argument(
             "--base-model", type=str, default=None, help="pretrained language model"
         )
+        parser.add_argument("--model", type=str, default=None, help="pretrained language model")
 
     @classmethod
     def build_model(cls, args, task):
@@ -262,6 +269,9 @@ class LSTMEncoder(FairseqEncoder):
         controller_hidden_dim=512,
         controller_latent_dim=512,
         controller_output_dim=1024,
+        with_aligner=False,
+        aligner_hidden_dim=1024,
+        aligner_latent_dim=1024,
     ):
         super().__init__(dictionary)
         self.num_layers = num_layers
@@ -299,6 +309,13 @@ class LSTMEncoder(FairseqEncoder):
             latent_dim=controller_latent_dim,
             output_dim=controller_output_dim,
         )
+
+        if with_aligner:
+            self.aligner = DistributionAligner(
+                input_dim=controller_latent_dim,
+                hidden_dim=aligner_hidden_dim,
+                latent_dim=aligner_latent_dim,
+            )
 
     def forward(self, src_tokens, src_lengths, dataset_name):
         if self.left_pad:
@@ -362,10 +379,15 @@ class LSTMEncoder(FairseqEncoder):
             x = x.float().masked_fill_(padding_mask, float("-inf")).type_as(x)
 
         controller_out = self.controller(final_hiddens, final_cells)
+        if hasattr(self, "aligner"):
+            aligner_out = self.aligner(controller_out["mu"], controller_out["log_var"])
+        else:
+            aligner_out = None
 
         return {
             "encoder_out": (x, final_hiddens, final_cells),
             "controller_out": controller_out,
+            "aligner_out": aligner_out,
             "encoder_padding_mask": encoder_padding_mask if encoder_padding_mask.any() else None,
         }
 
@@ -615,6 +637,37 @@ class Controller(nn.Module):
         return eps * std + mu
 
 
+class DistributionAligner(nn.Module):
+    def __init__(self, input_dim, hidden_dim, latent_dim):
+        super(DistributionAligner, self).__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.latent_dim = latent_dim
+
+        self.mu_hidden = nn.Linear(input_dim, hidden_dim)
+        self.var_hidden = nn.Linear(input_dim, hidden_dim)
+
+        self.mu_lat = nn.Linear(hidden_dim, latent_dim)
+        self.var_lat = nn.Linear(hidden_dim, latent_dim)
+
+        self.mu_out = nn.Linear(latent_dim, input_dim)
+        self.var_out = nn.Linear(latent_dim, input_dim)
+
+    def forward(self, mu: torch.Tensor, log_var: torch.Tensor):
+
+        mu = self.mu_hidden(mu)
+        log_var = self.var_hidden(log_var)
+
+        mu = self.mu_lat(mu)
+        log_var = self.var_lat(log_var)
+
+        mu = self.mu_out(mu)
+        log_var = self.var_out(log_var)
+
+        return {"mu": mu, "log_var": log_var}
+
+
 def Embedding(num_embeddings, embedding_dim, padding_idx):
     m = nn.Embedding(num_embeddings, embedding_dim, padding_idx=padding_idx)
     nn.init.uniform_(m.weight, -0.1, 0.1)
@@ -668,4 +721,6 @@ def base_architecture(args):
 
     args.controller_latent_dim = getattr(args, "controller_latent_dim", 1024)
     args.controller_hidden_dim = getattr(args, "controller_hidden_dim", 1024)
+    args.aligner_hidden_dim = getattr(args, "aligner_hidden_dim", 1024)
+    args.aligner_latent_dim = getattr(args, "aligner_latent_dim", 1024)
     args.base_model = getattr(args, "base_model", None)
